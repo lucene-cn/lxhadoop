@@ -119,7 +119,10 @@ public final class ExternalBlockReader implements BlockReader {
   public boolean isShortCircuit() {
     return accessor.isShortCircuit();
   }
-
+  @Override
+  public int readBatch(byte[][] buf, int[] off, int[] len) throws IOException {
+    throw new IOException("not supported");
+  }
   @Override
   public ClientMmap getClientMmap(EnumSet<ReadOption> opts) {
     // For now, pluggable ReplicaAccessors do not support zero-copy.
