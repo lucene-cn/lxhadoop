@@ -51,7 +51,7 @@ import java.nio.ByteBuffer;
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
 public class PacketHeaderBatch {
-  private static final int MAX_PROTO_SIZE = DataTransferProtos.PacketHeaderProtoBatch.newBuilder()
+  private static final int MAX_PROTO_SIZE = DataTransferProtos.PacketHeaderBatchProto.newBuilder()
       .setOffsetInBlock(0)
       .setSeqno(0)
       .setLastPacketInBlock(false)
@@ -64,7 +64,7 @@ public class PacketHeaderBatch {
       PKT_LENGTHS_LEN + MAX_PROTO_SIZE;
 
   private int packetLen;
-  private DataTransferProtos.PacketHeaderProtoBatch proto;
+  private DataTransferProtos.PacketHeaderBatchProto proto;
 
   public PacketHeaderBatch() {
   }
@@ -76,7 +76,7 @@ public class PacketHeaderBatch {
         "packet len %s should always be at least 4 bytes",
         packetLen);
 
-    DataTransferProtos.PacketHeaderProtoBatch.Builder builder = DataTransferProtos.PacketHeaderProtoBatch.newBuilder()
+    DataTransferProtos.PacketHeaderBatchProto.Builder builder = DataTransferProtos.PacketHeaderBatchProto.newBuilder()
         .setOffsetInBlock(offsetInBlock)
         .setSeqno(seqno).setBatchIndex(index)
         .setLastPacketInBlock(lastPacketInBlock)
@@ -127,7 +127,7 @@ public class PacketHeaderBatch {
   public void setFieldsFromData(
       int packetLen, byte[] headerData) throws InvalidProtocolBufferException {
     this.packetLen = packetLen;
-    proto = DataTransferProtos.PacketHeaderProtoBatch.parseFrom(headerData);
+    proto = DataTransferProtos.PacketHeaderBatchProto.parseFrom(headerData);
   }
 
   public void readFields(ByteBuffer buf) throws IOException {
@@ -135,7 +135,7 @@ public class PacketHeaderBatch {
     short protoLen = buf.getShort();
     byte[] data = new byte[protoLen];
     buf.get(data);
-    proto = DataTransferProtos.PacketHeaderProtoBatch.parseFrom(data);
+    proto = DataTransferProtos.PacketHeaderBatchProto.parseFrom(data);
   }
 
   public void readFields(DataInputStream in) throws IOException {
@@ -143,7 +143,7 @@ public class PacketHeaderBatch {
     short protoLen = in.readShort();
     byte[] data = new byte[protoLen];
     in.readFully(data);
-    proto = DataTransferProtos.PacketHeaderProtoBatch.parseFrom(data);
+    proto = DataTransferProtos.PacketHeaderBatchProto.parseFrom(data);
   }
 
   /**

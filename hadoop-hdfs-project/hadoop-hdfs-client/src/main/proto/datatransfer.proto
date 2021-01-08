@@ -230,7 +230,7 @@ message PacketHeaderProto {
   optional bool syncBlock = 5 [default = false];
 }
 
-message PacketHeaderProtoBatch {
+message PacketHeaderBatchProto {
   // All fields must be fixed-length!
   required sfixed64 batchIndex = 1;
   required sfixed64 offsetInBlock = 2;
