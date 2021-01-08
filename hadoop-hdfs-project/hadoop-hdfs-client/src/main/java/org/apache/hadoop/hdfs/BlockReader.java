@@ -42,6 +42,7 @@ public interface BlockReader extends ByteBufferReadable {
    * See HDFS-5762 for details.
    */
   int read(byte[] buf, int off, int len) throws IOException;
+  int readBatch(byte[][] buf, int[] off, int[] len) throws IOException;
 
   /**
    * Skip the given number of bytes

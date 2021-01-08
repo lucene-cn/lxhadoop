@@ -26,10 +26,7 @@ import org.apache.hadoop.hdfs.PeerCache;
 import org.apache.hadoop.hdfs.net.Peer;
 import org.apache.hadoop.hdfs.protocol.DatanodeID;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
-import org.apache.hadoop.hdfs.protocol.datatransfer.DataTransferProtoUtil;
-import org.apache.hadoop.hdfs.protocol.datatransfer.PacketHeader;
-import org.apache.hadoop.hdfs.protocol.datatransfer.PacketReceiver;
-import org.apache.hadoop.hdfs.protocol.datatransfer.Sender;
+import org.apache.hadoop.hdfs.protocol.datatransfer.*;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.BlockOpResponseProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ClientReadStatusProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ReadOpChecksumInfoProto;
@@ -92,7 +89,7 @@ public class BlockReaderRemote2Batch implements BlockReader {
   private final ReadableByteChannel in;
 
   private DataChecksum checksum;
-  private final PacketReceiver packetReceiver = new PacketReceiver(true);
+  private final PacketReceiverBatch packetReceiver = new PacketReceiverBatch(true);
 
   private ByteBuffer curDataSlice = null;
 
@@ -130,16 +127,15 @@ public class BlockReaderRemote2Batch implements BlockReader {
   }
 
   @Override
-  public synchronized int read(byte[] buf, int off, int len)
-      throws IOException {
+  public int readBatch(byte[][] buf, int[] off, int[] len) throws IOException {
     UUID randomId = (LOG.isTraceEnabled() ? UUID.randomUUID() : null);
     LOG.trace("Starting read #{} file {} from datanode {}",
-        randomId, filename, datanodeID.getHostName());
+            randomId, filename, datanodeID.getHostName());
 
     if (curDataSlice == null ||
-        curDataSlice.remaining() == 0 && bytesNeededToFinish > 0) {
+            curDataSlice.remaining() == 0 && bytesNeededToFinish > 0) {
       try (TraceScope ignored = tracer.newScope(
-          "BlockReaderRemote2#readNextPacket(" + blockId + ")")) {
+              "BlockReaderRemote2#readNextPacket(" + blockId + ")")) {
         readNextPacket();
       }
     }
@@ -151,44 +147,35 @@ public class BlockReaderRemote2Batch implements BlockReader {
       return -1;
     }
 
-    int nRead = Math.min(curDataSlice.remaining(), len);
-    curDataSlice.get(buf, off, nRead);
+    int nRead = Math.min(curDataSlice.remaining(), len[this.index]);
+    curDataSlice.get(buf[this.index], off[this.index], nRead);
 
     return nRead;
+  }
+
+  @Override
+  public synchronized int read(byte[] buf, int off, int len)
+      throws IOException {
+    throw new IOException("not supported");
+
   }
 
 
   @Override
   public synchronized int read(ByteBuffer buf) throws IOException {
-    if (curDataSlice == null ||
-        (curDataSlice.remaining() == 0 && bytesNeededToFinish > 0)) {
-      try (TraceScope ignored = tracer.newScope(
-          "BlockReaderRemote2#readNextPacket(" + blockId + ")")) {
-        readNextPacket();
-      }
-    }
-    if (curDataSlice.remaining() == 0) {
-      // we're at EOF now
-      return -1;
-    }
-
-    int nRead = Math.min(curDataSlice.remaining(), buf.remaining());
-    ByteBuffer writeSlice = curDataSlice.duplicate();
-    writeSlice.limit(writeSlice.position() + nRead);
-    buf.put(writeSlice);
-    curDataSlice.position(writeSlice.position());
-
-    return nRead;
+    throw new IOException("not supported");
   }
 
+  int index=0;
   private void readNextPacket() throws IOException {
     //Read packet headers.
     packetReceiver.receiveNextPacket(in);
 
-    PacketHeader curHeader = packetReceiver.getHeader();
+    PacketHeaderBatch curHeader = packetReceiver.getHeader();
     curDataSlice = packetReceiver.getDataSlice();
     assert curDataSlice.capacity() == curHeader.getDataLen();
 
+    this.index= (int) curHeader.getBatchIndex();
     LOG.trace("DFSClient readNextPacket got header {}", curHeader);
 
     // Sanity check the lengths
@@ -266,7 +253,7 @@ public class BlockReaderRemote2Batch implements BlockReader {
 
     packetReceiver.receiveNextPacket(in);
 
-    PacketHeader trailer = packetReceiver.getHeader();
+    PacketHeaderBatch trailer = packetReceiver.getHeader();
     if (!trailer.isLastPacketInBlock() ||
         trailer.getDataLen() != 0) {
       throw new IOException("Expected empty end-of-read packet! Header: " +

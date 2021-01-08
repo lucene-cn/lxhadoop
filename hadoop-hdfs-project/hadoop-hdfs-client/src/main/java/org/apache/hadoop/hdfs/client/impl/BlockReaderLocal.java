@@ -700,6 +700,11 @@ class BlockReaderLocal implements BlockReader {
     return this.maxReadaheadLength;
   }
 
+  @Override
+  public int readBatch(byte[][] buf, int[] off, int[] len) throws IOException {
+    throw new IOException("not supported");
+  }
+
   /**
    * Make the replica anchorable.  Normally this can only be done by the
    * DataNode.  This method is only for testing.

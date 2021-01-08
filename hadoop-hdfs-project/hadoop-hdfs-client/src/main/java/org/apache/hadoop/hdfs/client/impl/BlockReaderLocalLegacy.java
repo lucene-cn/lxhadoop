@@ -732,6 +732,10 @@ class BlockReaderLocalLegacy implements BlockReader {
   public boolean isShortCircuit() {
     return true;
   }
+  @Override
+  public int readBatch(byte[][] buf, int[] off, int[] len) throws IOException {
+    throw new IOException("not supported");
+  }
 
   @Override
   public ClientMmap getClientMmap(EnumSet<ReadOption> opts) {

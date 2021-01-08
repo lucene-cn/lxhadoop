@@ -68,7 +68,6 @@ public class PacketHeaderBatch {
 
   public PacketHeaderBatch() {
   }
-
   public PacketHeaderBatch(int packetLen, long offsetInBlock, long seqno,long index,
                            boolean lastPacketInBlock, int dataLen, boolean syncBlock) {
     this.packetLen = packetLen;
@@ -95,6 +94,9 @@ public class PacketHeaderBatch {
 
   public int getDataLen() {
     return proto.getDataLen();
+  }
+  public long getBatchIndex() {
+    return proto.getBatchIndex();
   }
 
   public boolean isLastPacketInBlock() {

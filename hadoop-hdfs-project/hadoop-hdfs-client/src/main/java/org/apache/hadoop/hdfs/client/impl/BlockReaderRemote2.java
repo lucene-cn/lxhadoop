@@ -465,7 +465,10 @@ public class BlockReaderRemote2 implements BlockReader {
   public boolean isShortCircuit() {
     return false;
   }
-
+  @Override
+  public int readBatch(byte[][] buf, int[] off, int[] len) throws IOException {
+    throw new IOException("not supported");
+  }
   @Override
   public ClientMmap getClientMmap(EnumSet<ReadOption> opts) {
     return null;

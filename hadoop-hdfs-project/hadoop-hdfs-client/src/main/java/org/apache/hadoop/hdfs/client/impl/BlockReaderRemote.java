@@ -507,6 +507,11 @@ public class BlockReaderRemote extends FSInputChecker implements BlockReader {
   }
 
   @Override
+  public int readBatch(byte[][] buf, int[] off, int[] len) throws IOException {
+    throw new IOException("not supported");
+  }
+
+  @Override
   public ClientMmap getClientMmap(EnumSet<ReadOption> opts) {
     return null;
   }
