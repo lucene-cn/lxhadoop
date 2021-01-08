@@ -797,6 +797,25 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
   }
 
+  @Override
+  public RandomAccessFile getBlockRandomAccessFile(ExtendedBlock b) throws IOException {
+    File blockFile = getBlockFileNoExistsCheck(b, true);
+    RandomAccessFile raf = null;
+    try {
+      raf = new RandomAccessFile(blockFile, "r");
+
+      return raf;
+    } catch(FileNotFoundException ioe) {
+      IOUtils.cleanup(null, raf);
+      throw new IOException("Block " + b + " is not valid. " +
+              "Expected block file at " + blockFile + " does not exist.");
+    } catch(IOException ioe) {
+      IOUtils.cleanup(null, raf);
+      throw ioe;
+    }
+  }
+
+
   /**
    * Get the meta info of a block stored in volumeMap. To find a block,
    * block pool Id, block Id and generation stamp must match.

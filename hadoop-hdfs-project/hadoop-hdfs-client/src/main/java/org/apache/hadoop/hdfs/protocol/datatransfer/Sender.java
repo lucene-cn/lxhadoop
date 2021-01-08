@@ -22,12 +22,14 @@ import static org.apache.hadoop.hdfs.protocol.datatransfer.DataTransferProtoUtil
 import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.fs.StorageType;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.CachingStrategyProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ChecksumProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ClientOperationHeaderProto;
@@ -112,6 +114,33 @@ public class Sender implements DataTransferProtocol {
     send(out, Op.READ_BLOCK, proto);
   }
 
+
+  public void readBlockBatch(final ExtendedBlock blk,
+                        final Token<BlockTokenIdentifier> blockToken,
+                        final String clientName,
+                        final long[] blockOffset,
+                        final long[] length,
+                        final boolean sendChecksum,
+                        final CachingStrategy cachingStrategy) throws IOException {
+
+    ArrayList<DataTransferProtos.OpReadBlockProtoItem> batchItem=new ArrayList<DataTransferProtos.OpReadBlockProtoItem>();
+    for(int i=0;i<blockOffset.length;i++)
+    {
+        DataTransferProtos.OpReadBlockProtoItem item = DataTransferProtos.OpReadBlockProtoItem.newBuilder()
+               .setOffset(blockOffset[i]) .setLen(length[i]).build();
+        batchItem.add(item);
+    }
+
+    DataTransferProtos.OpReadBlockProtoBatch proto = DataTransferProtos.OpReadBlockProtoBatch.newBuilder()
+            .setHeader(DataTransferProtoUtil.buildClientHeader(blk, clientName,
+                    blockToken))
+            .addAllBatch(batchItem)
+            .setSendChecksums(sendChecksum)
+            .setCachingStrategy(getCachingStrategy(cachingStrategy))
+            .build();
+
+    send(out, Op.READ_BLOCK, proto);
+  }
 
   @Override
   public void writeBlock(final ExtendedBlock blk,

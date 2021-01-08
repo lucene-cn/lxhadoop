@@ -26,6 +26,8 @@ import java.io.IOException;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
+import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.BaseHeaderProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.CachingStrategyProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ClientOperationHeaderProto;
@@ -40,8 +42,10 @@ import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpWriteBlockProt
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ReleaseShortCircuitAccessRequestProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ShortCircuitShmRequestProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelperClient;
+import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
 import org.apache.hadoop.hdfs.server.datanode.CachingStrategy;
 import org.apache.hadoop.hdfs.shortcircuit.ShortCircuitShm.SlotId;
+import org.apache.hadoop.security.token.Token;
 import org.apache.htrace.core.SpanId;
 import org.apache.htrace.core.TraceScope;
 import org.apache.htrace.core.Tracer;
@@ -99,6 +103,9 @@ public abstract class Receiver implements DataTransferProtocol {
     case READ_BLOCK:
       opReadBlock();
       break;
+	case READ_BLOCK_BATCH:
+      opReadBlockBatch();
+      break; 
     case WRITE_BLOCK:
       opWriteBlock(in);
       break;
@@ -134,6 +141,35 @@ public abstract class Receiver implements DataTransferProtocol {
     Long readahead = strategy.hasReadahead() ?
         strategy.getReadahead() : null;
     return new CachingStrategy(dropBehind, readahead);
+  }
+  
+    private void opReadBlockBatch() throws IOException {
+      DataTransferProtos.OpReadBlockProtoBatch proto = DataTransferProtos.OpReadBlockProtoBatch.parseFrom(vintPrefixed(in));
+      int cnt=proto.getBatchCount();
+
+      final long[] blockOffset=new long[cnt];
+      final long[] length=new long[cnt];
+      for(int i=0;i<cnt;i++)
+      {
+        DataTransferProtos.OpReadBlockProtoItem item = proto.getBatch(i);
+        blockOffset[i]=item.getOffset();
+        length[i]=item.getLen();
+      }
+
+    TraceScope traceScope = continueTraceSpan(proto.getHeader(),
+        proto.getClass().getSimpleName());
+    try {
+      readBlockBatch(PBHelperClient.convert(proto.getHeader().getBaseHeader().getBlock()),
+        PBHelperClient.convert(proto.getHeader().getBaseHeader().getToken()),
+        proto.getHeader().getClientName(), blockOffset,
+              length,
+        proto.getSendChecksums(),
+        (proto.hasCachingStrategy() ?
+            getCachingStrategy(proto.getCachingStrategy()) :
+          CachingStrategy.newDefaultStrategy()));
+    } finally {
+      if (traceScope != null) traceScope.close();
+    }
   }
 
   /** Receive OP_READ_BLOCK */

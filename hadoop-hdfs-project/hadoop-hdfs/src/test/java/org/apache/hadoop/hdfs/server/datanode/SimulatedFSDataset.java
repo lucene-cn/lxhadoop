@@ -17,11 +17,7 @@
  */
 package org.apache.hadoop.hdfs.server.datanode;
 
-import java.io.File;
-import java.io.FileDescriptor;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
 import java.nio.channels.ClosedChannelException;
 import java.util.Collections;
 import java.util.HashMap;
@@ -988,6 +984,11 @@ public class SimulatedFSDataset implements FsDatasetSpi<FsVolumeSpi> {
     InputStream result = getBlockInputStream(b);
     IOUtils.skipFully(result, seekOffset);
     return result;
+  }
+
+  @Override
+  public RandomAccessFile getBlockRandomAccessFile(ExtendedBlock b) throws IOException {
+     throw new IOException("not supported");
   }
 
   /** Not supported */

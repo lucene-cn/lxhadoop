@@ -131,6 +131,11 @@ public class ExternalDatasetImpl implements FsDatasetSpi<ExternalVolumeImpl> {
   }
 
   @Override
+  public RandomAccessFile getBlockRandomAccessFile(ExtendedBlock b) throws IOException {
+    throw new IOException("not supported");
+  }
+
+  @Override
   public ReplicaInputStreams getTmpInputStreams(ExtendedBlock b, long blkoff,
       long ckoff) throws IOException {
     return new ReplicaInputStreams(null, null, null);

@@ -547,6 +547,103 @@ class DataXceiver extends Receiver implements Runnable {
     peer = null;
   }
 
+
+  @Override
+  public void readBlockBatch(final ExtendedBlock block,
+                        final Token<BlockTokenIdentifier> blockToken,
+                        final String clientName,
+                        final long[] blockOffset,
+                        final long[] length,
+                        final boolean sendChecksum,
+                        final CachingStrategy cachingStrategy) throws IOException {
+    previousOpClientName = clientName;
+    long read = 0;
+    updateCurrentThreadName("Sending block " + block);
+    OutputStream baseStream = getOutputStream();
+    DataOutputStream out = getBufferedOutputStream();
+    checkAccess(out, true, block, blockToken,
+            Op.READ_BLOCK, BlockTokenIdentifier.AccessMode.READ);
+
+    // send the block
+    BlockSenderBatch blockSender = null;
+    DatanodeRegistration dnR =
+            datanode.getDNRegistrationForBP(block.getBlockPoolId());
+    final String clientTraceFmt =
+            clientName.length() > 0 && ClientTraceLog.isInfoEnabled()
+                    ? String.format(DN_CLIENTTRACE_FORMAT, localAddress, remoteAddress,
+                    "%d", "HDFS_READ", clientName, "%d",
+                    dnR.getDatanodeUuid(), block, "%d")
+                    : dnR + " Served block " + block + " to " +
+                    remoteAddress;
+
+    try {
+      try {
+        blockSender = new BlockSenderBatch(block, blockOffset, length,
+                true, false, sendChecksum, datanode, clientTraceFmt,
+                cachingStrategy);
+      } catch(IOException e) {
+        String msg = "opReadBlock " + block + " received exception " + e;
+        LOG.info(msg);
+        sendResponse(ERROR, msg);
+        throw e;
+      }
+
+      // send op status
+      writeSuccessWithChecksumInfo(blockSender, new DataOutputStream(getOutputStream()));
+
+      long beginRead = Time.monotonicNow();
+      read = blockSender.sendBlock(out, baseStream, null); // send data
+      long duration = Time.monotonicNow() - beginRead;
+      if (blockSender.didSendEntireByteRange()) {
+        // If we sent the entire range, then we should expect the client
+        // to respond with a Status enum.
+        try {
+          ClientReadStatusProto stat = ClientReadStatusProto.parseFrom(
+                  PBHelperClient.vintPrefixed(in));
+          if (!stat.hasStatus()) {
+            LOG.warn("Client " + peer.getRemoteAddressString() +
+                    " did not send a valid status code after reading. " +
+                    "Will close connection.");
+            IOUtils.closeStream(out);
+          }
+        } catch (IOException ioe) {
+          LOG.debug("Error reading client status response. Will close connection.", ioe);
+          IOUtils.closeStream(out);
+          incrDatanodeNetworkErrors();
+        }
+      } else {
+        IOUtils.closeStream(out);
+      }
+      datanode.metrics.incrBytesRead((int) read);
+      datanode.metrics.incrBlocksRead();
+      datanode.metrics.incrTotalReadTime(duration);
+    } catch ( SocketException ignored ) {
+      if (LOG.isTraceEnabled()) {
+        LOG.trace(dnR + ":Ignoring exception while serving " + block + " to " +
+                remoteAddress, ignored);
+      }
+      // Its ok for remote side to close the connection anytime.
+      datanode.metrics.incrBlocksRead();
+      IOUtils.closeStream(out);
+    } catch ( IOException ioe ) {
+      /* What exactly should we do here?
+       * Earlier version shutdown() datanode if there is disk error.
+       */
+      if (!(ioe instanceof SocketTimeoutException)) {
+        LOG.warn(dnR + ":Got exception while serving " + block + " to "
+                + remoteAddress, ioe);
+        incrDatanodeNetworkErrors();
+      }
+      throw ioe;
+    } finally {
+      IOUtils.closeStream(blockSender);
+    }
+
+    //update metrics
+    datanode.metrics.addReadBlockOp(elapsed());
+    datanode.metrics.incrReadsFromClient(peer.isLocal(), read);
+  }
+
   @Override
   public void readBlock(final ExtendedBlock block,
       final Token<BlockTokenIdentifier> blockToken,
@@ -1309,16 +1406,29 @@ class DataXceiver extends Receiver implements Runnable {
     response.writeDelimitedTo(out);
     out.flush();
   }
+
+  private void writeSuccessWithChecksumInfo(BlockSenderBatch blockSender,
+                                            DataOutputStream out) throws IOException {
+
+    ReadOpChecksumInfoProto ckInfo = ReadOpChecksumInfoProto.newBuilder()
+            .setChecksum(DataTransferProtoUtil.toProto(blockSender.getChecksum()))
+            .setChunkOffset(0)
+            .build();
+
+    BlockOpResponseProto response = BlockOpResponseProto.newBuilder()
+            .setStatus(SUCCESS)
+            .setReadOpChecksumInfo(ckInfo)
+            .build();
+    response.writeDelimitedTo(out);
+    out.flush();
+  }
+
   
   private void incrDatanodeNetworkErrors() {
     datanode.incrDatanodeNetworkErrors(remoteAddressWithoutPort);
   }
 
-  /**
-   * Wait until the BP is registered, upto the configured amount of time.
-   * Throws an exception if times out, which should fail the client request.
-   * @param the requested block
-   */
+
   void checkAndWaitForBP(final ExtendedBlock block)
       throws IOException {
     String bpId = block.getBlockPoolId();

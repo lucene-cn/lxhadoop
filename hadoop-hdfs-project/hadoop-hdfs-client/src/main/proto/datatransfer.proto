@@ -66,6 +66,7 @@ message CachingStrategyProto {
   optional int64 readahead = 2;
 }
 
+
 message OpReadBlockProto {
   required ClientOperationHeaderProto header = 1;
   required uint64 offset = 2;
@@ -74,6 +75,16 @@ message OpReadBlockProto {
   optional CachingStrategyProto cachingStrategy = 5;
 }
 
+message OpReadBlockProtoItem {
+  required uint64 offset = 2;
+  required uint64 len = 3;
+}
+message OpReadBlockProtoBatch {
+    required ClientOperationHeaderProto header = 1;
+    repeated OpReadBlockProtoItem batch = 2;
+    optional bool sendChecksums = 3 [default = true];
+    optional CachingStrategyProto cachingStrategy = 4;
+}
 
 message ChecksumProto {
   required ChecksumTypeProto type = 1;
@@ -218,6 +229,17 @@ message PacketHeaderProto {
   required sfixed32 dataLen = 4;
   optional bool syncBlock = 5 [default = false];
 }
+
+message PacketHeaderProtoBatch {
+  // All fields must be fixed-length!
+  required sfixed64 batchIndex = 1;
+  required sfixed64 offsetInBlock = 2;
+  required sfixed64 seqno = 3;
+  required bool lastPacketInBlock = 4;
+  required sfixed32 dataLen = 5;
+  optional bool syncBlock = 6 [default = false];
+}
+
 
 // Status is a 4-bit enum
 enum Status {

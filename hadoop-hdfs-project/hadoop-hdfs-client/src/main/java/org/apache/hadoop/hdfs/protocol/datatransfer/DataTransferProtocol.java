@@ -71,6 +71,14 @@ public interface DataTransferProtocol {
       final boolean sendChecksum,
       final CachingStrategy cachingStrategy) throws IOException;
 
+  void readBlockBatch(final ExtendedBlock blk,
+                 final Token<BlockTokenIdentifier> blockToken,
+                 final String clientName,
+                 final long[] blockOffset,
+                 final long[] length,
+                 final boolean sendChecksum,
+                 final CachingStrategy cachingStrategy) throws IOException;
+
   /**
    * Write a block to a datanode pipeline.
    * The receiver datanode of this call is the next datanode in the pipeline.
