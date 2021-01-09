@@ -44,6 +44,7 @@ import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.channels.ClosedChannelException;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
@@ -64,6 +65,7 @@ import org.apache.hadoop.hdfs.protocol.datatransfer.Receiver;
 import org.apache.hadoop.hdfs.protocol.datatransfer.Sender;
 import org.apache.hadoop.hdfs.protocol.datatransfer.sasl.DataEncryptionKeyFactory;
 import org.apache.hadoop.hdfs.protocol.datatransfer.sasl.InvalidMagicNumberException;
+import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.BlockOpResponseProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ClientReadStatusProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpBlockChecksumResponseProto;
@@ -1410,12 +1412,16 @@ class DataXceiver extends Receiver implements Runnable {
   private void writeSuccessWithChecksumInfo(BlockSenderBatch blockSender,
                                             DataOutputStream out) throws IOException {
 
-    ReadOpChecksumInfoProto ckInfo = ReadOpChecksumInfoProto.newBuilder()
+    ArrayList<Long> list=new ArrayList<>();
+    for(Long l:blockSender.getOffset()){
+      list.add(l);
+    }
+    DataTransferProtos.ReadOpChecksumInfoBatchProto ckInfo = DataTransferProtos.ReadOpChecksumInfoBatchProto.newBuilder()
             .setChecksum(DataTransferProtoUtil.toProto(blockSender.getChecksum()))
-            .setChunkOffset(0)
+            .addAllChunkOffset(list)
             .build();
 
-    BlockOpResponseProto response = BlockOpResponseProto.newBuilder()
+    DataTransferProtos.BlockOpResponseBatchProto response = DataTransferProtos.BlockOpResponseBatchProto.newBuilder()
             .setStatus(SUCCESS)
             .setReadOpChecksumInfo(ckInfo)
             .build();

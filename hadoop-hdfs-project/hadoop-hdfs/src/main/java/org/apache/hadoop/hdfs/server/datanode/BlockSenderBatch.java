@@ -214,8 +214,7 @@ class BlockSenderBatch implements java.io.Closeable {
           if ((e.getMessage() != null) && !(e.getMessage()
               .contains("Too many open files"))) {
             // The replica is on its volume map but not on disk
-            datanode
-                .notifyNamenodeDeletedBlock(block, replica.getStorageUuid());
+            datanode.notifyNamenodeDeletedBlock(block, replica.getStorageUuid());
             datanode.data.invalidate(block.getBlockPoolId(),
                 new Block[] {block.getLocalBlock()});
           }
@@ -718,5 +717,7 @@ class BlockSenderBatch implements java.io.Closeable {
   DataChecksum getChecksum() {
     return checksum;
   }
-
+  long[] getOffset() {
+    return offset;
+  }
 }

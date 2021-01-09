@@ -285,12 +285,44 @@ message ReadOpChecksumInfoProto {
   required uint64 chunkOffset = 2;
 }
 
+message ReadOpChecksumInfoBatchProto {
+  required ChecksumProto checksum = 1;
+
+  /**
+   * The offset into the block at which the first packet
+   * will start. This is necessary since reads will align
+   * backwards to a checksum chunk boundary.
+   */
+  repeated uint64 chunkOffset = 2;
+}
+
 message BlockOpResponseProto {
   required Status status = 1;
 
   optional string firstBadLink = 2;
   optional OpBlockChecksumResponseProto checksumResponse = 3;
   optional ReadOpChecksumInfoProto readOpChecksumInfo = 4;
+
+  /** explanatory text which may be useful to log on the client side */
+  optional string message = 5;
+
+  /** If the server chooses to agree to the request of a client for
+   * short-circuit access, it will send a response message with the relevant
+   * file descriptors attached.
+   *
+   * In the body of the message, this version number will be set to the
+   * specific version number of the block data that the client is about to
+   * read.
+   */
+  optional uint32 shortCircuitAccessVersion = 6;
+}
+
+message BlockOpResponseBatchProto {
+  required Status status = 1;
+
+  optional string firstBadLink = 2;
+  optional OpBlockChecksumResponseProto checksumResponse = 3;
+  optional ReadOpChecksumInfoBatchProto readOpChecksumInfo = 4;
 
   /** explanatory text which may be useful to log on the client side */
   optional string message = 5;
