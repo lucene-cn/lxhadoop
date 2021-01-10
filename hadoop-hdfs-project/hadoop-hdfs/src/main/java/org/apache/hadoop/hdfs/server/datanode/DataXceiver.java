@@ -1416,8 +1416,13 @@ class DataXceiver extends Receiver implements Runnable {
     for(Long l:blockSender.getOffset()){
       list.add(l);
     }
+
+    ArrayList<DataTransferProtos.ChecksumProto> listchk=new ArrayList<>();
+    for(DataChecksum e:blockSender.getChecksum()){
+      listchk.add(DataTransferProtoUtil.toProto(e));
+    }
     DataTransferProtos.ReadOpChecksumInfoBatchProto ckInfo = DataTransferProtos.ReadOpChecksumInfoBatchProto.newBuilder()
-            .setChecksum(DataTransferProtoUtil.toProto(blockSender.getChecksum()))
+            .addAllChecksum(listchk)
             .addAllChunkOffset(list)
             .build();
 

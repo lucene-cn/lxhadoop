@@ -286,7 +286,7 @@ message ReadOpChecksumInfoProto {
 }
 
 message ReadOpChecksumInfoBatchProto {
-  required ChecksumProto checksum = 1;
+  repeated ChecksumProto checksum = 1;
 
   /**
    * The offset into the block at which the first packet
