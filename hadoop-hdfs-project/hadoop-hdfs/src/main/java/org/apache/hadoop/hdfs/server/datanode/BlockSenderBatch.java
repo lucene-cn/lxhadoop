@@ -457,7 +457,7 @@ class BlockSenderBatch implements java.io.Closeable {
       boolean transferTo, DataTransferThrottler throttler) throws IOException {
     int dataLen = (int) Math.min(endOffset[index] - offset[index], (chunkSize[index] * (long) maxChunks));
     
-    int numChunks = numberOfChunks(dataLen,index); // Number of chunks be sent in the packet
+    int numChunks = numberOfChunks(index,dataLen); // Number of chunks be sent in the packet
     int checksumDataLen = numChunks * checksumSize[index];
     int packetLen = dataLen + checksumDataLen + 4;
     //单条消息的最后一个包
