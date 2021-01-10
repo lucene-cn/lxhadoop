@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs.protocol;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.classification.InterfaceAudience;
@@ -38,6 +39,18 @@ import com.google.common.collect.Lists;
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
 public class LocatedBlock {
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (o == null || getClass() != o.getClass()) return false;
+    LocatedBlock that = (LocatedBlock) o;
+    return Objects.equals(b, that.b);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(b);
+  }
 
   private final ExtendedBlock b;
   private long offset;  // offset of the first byte of the block in the file

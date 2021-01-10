@@ -20,6 +20,7 @@ package org.apache.hadoop.fs;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
 
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.classification.InterfaceAudience;
@@ -112,6 +113,25 @@ public abstract class FSInputStream extends InputStream
     }
   }
 
+  protected void validatePositionedReadArgs(long[] position,
+                                            byte[][] buffer, int[] offset, int[] length) throws EOFException {
+   for(int i=0;i<position.length;i++)
+   {
+     Preconditions.checkArgument(length[i] >= 0, "length is negative");
+     if (position[i] < 0) {
+       throw new EOFException("position is negative");
+     }
+     Preconditions.checkArgument(buffer[i] != null, "Null buffer");
+     if (buffer[i].length - offset[i] < length[i]) {
+       throw new IndexOutOfBoundsException(
+               FSExceptionMessages.TOO_MANY_BYTES_FOR_DEST_BUFFER
+                       + ": request length=" + length[i]
+                       + ", with offset ="+ offset[i]
+                       + "; buffer capacity =" + (buffer[i].length - offset[i]));
+     }
+   }
+  }
+
   @Override
   public void readFully(long position, byte[] buffer, int offset, int length)
     throws IOException {
@@ -127,6 +147,73 @@ public abstract class FSInputStream extends InputStream
       }
       nread += nbytes;
     }
+  }
+
+
+  public int cmpReadLength(int[] nread,int[] length)
+  {
+    int rtn=0;
+  for(int i=0;i<nread.length;i++)
+  {
+      if(nread[i] < length[i])
+      {
+        rtn++;
+      }
+  }
+
+    return rtn;
+  }
+  public void readFully(long[] position, byte[][] buffer, int[] offset, int[] length)
+          throws IOException {
+    validatePositionedReadArgs(position, buffer, offset, length);
+    int[] nread = new int[position.length];
+    Arrays.fill(nread,0);
+    int nonZeroLen=cmpReadLength(nread , length);
+    int loopcn=0;
+    while (nonZeroLen>0) {
+
+      if(loopcn++>10240)
+      {
+        throw  new IOException("too many loops");
+      }
+      long[] position_nonzero=new long[nonZeroLen];
+      byte[][] buffer_nonzero=new byte[nonZeroLen][];
+      int[] offset_nonzero=new int[nonZeroLen];
+      int[] length_nonzero=new int[nonZeroLen];
+      int[] index_list=new int[nonZeroLen];
+
+      int index=0;
+      for(int i=0;i<position.length;i++)
+      {
+        if(nread[i] >= length[i])
+        {
+          continue;
+        }
+        position_nonzero[index]=position[i]+nread[i];
+        buffer_nonzero[index]=buffer[i];
+        offset_nonzero[index]=offset[i]+nread[i];
+        length_nonzero[index]=length[i]-+nread[i];
+        index_list[index]=i;
+        index++;
+      }
+
+
+      int[] nbytes = readBatch(position_nonzero, buffer_nonzero, offset_nonzero,length_nonzero);
+
+      for(int i=0;i<offset.length;i++)
+      {
+        if (nbytes[i] < 0) {
+          throw new EOFException(FSExceptionMessages.EOF_IN_READ_FULLY);
+        }
+        nread[i] += nbytes[i];
+      }
+      nonZeroLen=cmpReadLength(nread , length);
+    }
+  }
+
+  public int[] readBatch(long[] position, byte[][] buffer, int[] offset, int[] length)
+          throws IOException {
+      throw new IOException("not supported");
   }
 
   @Override

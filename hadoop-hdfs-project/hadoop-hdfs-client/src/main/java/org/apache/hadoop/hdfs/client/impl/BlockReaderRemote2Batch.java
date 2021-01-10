@@ -98,23 +98,27 @@ public class BlockReaderRemote2Batch implements BlockReader {
   @Override
   public int readBatch(byte[][] buf, int[] off, int[] len) throws IOException {
 
-    if (curDataSlice == null ||
-            curDataSlice.remaining() == 0 && bytesNeededToFinish[this.index] > 0||((this.index+1)<this.bytesNeededToFinish.length)) {
-      try (TraceScope ignored = tracer.newScope("BlockReaderRemote2#readNextPacket(" + blockId + ")")) {
-        readNextPacket();
+    int amt=0;
+    for(int i=0;i<off.length;i++)
+    {
+      if (curDataSlice == null ||
+              curDataSlice.remaining() == 0 && bytesNeededToFinish[this.index] > 0||((this.index+1)<this.bytesNeededToFinish.length)) {
+        try (TraceScope ignored = tracer.newScope("BlockReaderRemote2#readNextPacket(" + blockId + ")")) {
+          readNextPacket(i);
+        }
       }
+
+      if (curDataSlice.remaining() == 0) {
+        // we're at EOF now
+        return -1;
+      }
+
+      int nRead = Math.min(curDataSlice.remaining(), len[this.index]);
+      curDataSlice.get(buf[this.index], off[this.index], nRead);
+      amt+=nRead;
     }
 
-
-    if (curDataSlice.remaining() == 0) {
-      // we're at EOF now
-      return -1;
-    }
-
-    int nRead = Math.min(curDataSlice.remaining(), len[this.index]);
-    curDataSlice.get(buf[this.index], off[this.index], nRead);
-
-    return nRead;
+    return amt;
   }
 
   @Override
@@ -130,7 +134,7 @@ public class BlockReaderRemote2Batch implements BlockReader {
   }
 
   int index=0;
-  private void readNextPacket() throws IOException {
+  private void readNextPacket(int i) throws IOException {
     //Read packet headers.
     packetReceiver.receiveNextPacket(in);
 
@@ -139,6 +143,10 @@ public class BlockReaderRemote2Batch implements BlockReader {
     assert curDataSlice.capacity() == curHeader.getDataLen();
 
     this.index= (int) curHeader.getBatchIndex();
+    if(this.index!=i)
+    {
+      throw new IOException("out of order "+this.index+"@"+i);
+    }
 
     // Sanity check the lengths
     if (!curHeader.sanityCheck(lastSeqNo)) {
