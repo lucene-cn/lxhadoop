@@ -131,7 +131,12 @@ public class ExternalDatasetImpl implements FsDatasetSpi<ExternalVolumeImpl> {
   }
 
   @Override
-  public RandomAccessFile getBlockRandomAccessFile(ExtendedBlock b) throws IOException {
+  public File getBlockRandomAccessFile(ExtendedBlock b) throws IOException {
+    throw new IOException("not supported");
+  }
+  @Override
+  public File getMetaRandomAccessFile(ExtendedBlock b)
+          throws IOException {
     throw new IOException("not supported");
   }
 

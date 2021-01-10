@@ -987,7 +987,7 @@ public class SimulatedFSDataset implements FsDatasetSpi<FsVolumeSpi> {
   }
 
   @Override
-  public RandomAccessFile getBlockRandomAccessFile(ExtendedBlock b) throws IOException {
+  public File getBlockRandomAccessFile(ExtendedBlock b) throws IOException {
      throw new IOException("not supported");
   }
 
@@ -997,7 +997,11 @@ public class SimulatedFSDataset implements FsDatasetSpi<FsVolumeSpi> {
       long ckoff) throws IOException {
     throw new IOException("Not supported");
   }
-
+  @Override
+  public File getMetaRandomAccessFile(ExtendedBlock b)
+          throws IOException {
+    throw new IOException("not supported");
+  }
   @Override // FsDatasetSpi
   public synchronized LengthInputStream getMetaDataInputStream(ExtendedBlock b
       ) throws IOException {

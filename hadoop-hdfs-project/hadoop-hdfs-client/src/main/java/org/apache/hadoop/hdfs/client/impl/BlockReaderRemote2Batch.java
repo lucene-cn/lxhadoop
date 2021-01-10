@@ -67,7 +67,7 @@ public class BlockReaderRemote2Batch implements BlockReader {
   private DataChecksum checksum;
   private final PacketReceiverBatch packetReceiver = new PacketReceiverBatch(true);
 
-  private ByteBuffer curDataSlice = null;
+  final ByteBuffer[] curDataSlice;
 
   /** offset in block of the last chunk received */
   private long lastSeqNo = -1;
@@ -101,20 +101,21 @@ public class BlockReaderRemote2Batch implements BlockReader {
     int amt=0;
     for(int i=0;i<off.length;i++)
     {
-      if (curDataSlice == null ||
-              curDataSlice.remaining() == 0 && bytesNeededToFinish[this.index] > 0||((this.index+1)<this.bytesNeededToFinish.length)) {
+      LOG.info("yanniandebug:"+i);
+      if (curDataSlice[i] == null ||
+              curDataSlice[i].remaining() == 0 && bytesNeededToFinish[this.index] > 0||((this.index+1)<this.bytesNeededToFinish.length)) {
         try (TraceScope ignored = tracer.newScope("BlockReaderRemote2#readNextPacket(" + blockId + ")")) {
           readNextPacket(i);
         }
       }
 
-      if (curDataSlice.remaining() == 0) {
+      if (curDataSlice[i].remaining() == 0) {
         // we're at EOF now
         return -1;
       }
 
-      int nRead = Math.min(curDataSlice.remaining(), len[this.index]);
-      curDataSlice.get(buf[this.index], off[this.index], nRead);
+      int nRead = Math.min(curDataSlice[i].remaining(), len[this.index]);
+      curDataSlice[i].get(buf[this.index], off[this.index], nRead);
       amt+=nRead;
     }
 
@@ -139,8 +140,8 @@ public class BlockReaderRemote2Batch implements BlockReader {
     packetReceiver.receiveNextPacket(in);
 
     PacketHeaderBatch curHeader = packetReceiver.getHeader();
-    curDataSlice = packetReceiver.getDataSlice();
-    assert curDataSlice.capacity() == curHeader.getDataLen();
+    curDataSlice[i] = packetReceiver.getDataSlice();
+    assert curDataSlice[i].capacity() == curHeader.getDataLen();
 
     this.index= (int) curHeader.getBatchIndex();
     if(this.index!=i)
@@ -164,12 +165,12 @@ public class BlockReaderRemote2Batch implements BlockReader {
               " checksumsLen=" + checksumsLen;
 
       lastSeqNo = curHeader.getSeqno();
-      if (verifyChecksum && curDataSlice.remaining() > 0) {
+      if (verifyChecksum && curDataSlice[i].remaining() > 0) {
         // N.B.: the checksum error offset reported here is actually
         // relative to the start of the block, not the start of the file.
         // This is slightly misleading, but preserves the behavior from
         // the older BlockReader.
-        checksum.verifyChunkedSums(curDataSlice,
+        checksum.verifyChunkedSums(curDataSlice[i],
             packetReceiver.getChecksumSlice(),
             filename, curHeader.getOffsetInBlock());
       }
@@ -180,7 +181,7 @@ public class BlockReaderRemote2Batch implements BlockReader {
     // the user requested. Skip it.
     if (curHeader.getOffsetInBlock() < startOffset[this.index]) {
       int newPos = (int) (startOffset[this.index] - curHeader.getOffsetInBlock());
-      curDataSlice.position(newPos);
+      curDataSlice[i].position(newPos);
     }
 
     // If we've now satisfied the whole client read, read one last packet
@@ -190,8 +191,12 @@ public class BlockReaderRemote2Batch implements BlockReader {
       if((this.index+1)>=this.bytesNeededToFinish.length)
       {
         if (verifyChecksum) {
+          LOG.info(" yanniandebug sendReadResult CHECKSUM_OK");
+
           sendReadResult(Status.CHECKSUM_OK);
         } else {
+          LOG.info(" yanniandebug sendReadResult SUCCESS");
+
           sendReadResult(Status.SUCCESS);
         }
       }
@@ -230,6 +235,9 @@ public class BlockReaderRemote2Batch implements BlockReader {
     this.checksum = checksum;
     this.verifyChecksum = verifyChecksum;
     this.startOffset =new long[startOffset.length];
+    this.bytesNeededToFinish =new long[startOffset.length];
+    this.curDataSlice=new ByteBuffer[startOffset.length];
+
     for(int i=0;i<this.startOffset.length;i++)
     {
       this.startOffset[i] =Math.max(startOffset[i],0);

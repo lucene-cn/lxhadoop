@@ -253,6 +253,9 @@ public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
   LengthInputStream getMetaDataInputStream(ExtendedBlock b
       ) throws IOException;
 
+  public File getMetaRandomAccessFile(ExtendedBlock b)
+          throws IOException ;
+
   /**
    * Returns the specified block's on-disk length (excluding metadata).
    * @return   the specified block's on-disk length (excluding metadta)
@@ -290,7 +293,7 @@ public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
             throws IOException;
 
 
-  RandomAccessFile getBlockRandomAccessFile(ExtendedBlock b)
+  File getBlockRandomAccessFile(ExtendedBlock b)
           throws IOException;
 
   /**

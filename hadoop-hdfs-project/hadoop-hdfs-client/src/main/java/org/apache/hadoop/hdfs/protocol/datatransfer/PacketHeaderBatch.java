@@ -53,7 +53,7 @@ import java.nio.ByteBuffer;
 public class PacketHeaderBatch {
   private static final int MAX_PROTO_SIZE = DataTransferProtos.PacketHeaderBatchProto.newBuilder()
       .setOffsetInBlock(0)
-      .setSeqno(0)
+      .setSeqno(0).setBatchIndex(0)
       .setLastPacketInBlock(false)
       .setDataLen(0)
       .setSyncBlock(false)

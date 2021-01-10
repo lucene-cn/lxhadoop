@@ -798,21 +798,20 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
   }
 
   @Override
-  public RandomAccessFile getBlockRandomAccessFile(ExtendedBlock b) throws IOException {
-    File blockFile = getBlockFileNoExistsCheck(b, true);
-    RandomAccessFile raf = null;
-    try {
-      raf = new RandomAccessFile(blockFile, "r");
+  public File getBlockRandomAccessFile(ExtendedBlock b) throws IOException {
+    return  getBlockFileNoExistsCheck(b, true);
+  }
 
-      return raf;
-    } catch(FileNotFoundException ioe) {
-      IOUtils.cleanup(null, raf);
-      throw new IOException("Block " + b + " is not valid. " +
-              "Expected block file at " + blockFile + " does not exist.");
-    } catch(IOException ioe) {
-      IOUtils.cleanup(null, raf);
-      throw ioe;
+
+  public File getMetaRandomAccessFile(ExtendedBlock b)
+          throws IOException {
+    File meta = FsDatasetUtil.getMetaFile(getBlockFile(b), b.getGenerationStamp());
+    if (meta == null || !meta.exists()) {
+      return null;
     }
+
+    return meta;
+
   }
 
 
