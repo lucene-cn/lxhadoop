@@ -244,18 +244,21 @@ class BlockSenderBatch implements java.io.Closeable {
 
       // end is either last byte on disk or the length for which we have a
       // checksum
-      long end = chunkChecksum != null ? chunkChecksum.getDataLength()     : replica.getBytesOnDisk();
+      long init_end=chunkChecksum != null ? chunkChecksum.getDataLength()     : replica.getBytesOnDisk();
+      long[] end = new long[startOffset.length];
+      Arrays.fill(end,init_end);
       offset=new long[startOffset.length];
       endOffset=new long[startOffset.length];
 
-
+//2021-01-10 18:18:57,299 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: yanniandebug:134217728@134217728@132766993@1022
+      LOG.info("yanniandebug:"+replica.getBytesOnDisk()+"@"+end+"@"+maxBlockLen+"@"+maxLen);
       for(int i=0;i<startOffset.length;i++)
       {
         length[i] = length[i] < 0 ? replicaVisibleLength : length[i];
-
-        if (startOffset[i] < 0 || startOffset[i] > end       || (length[i] + startOffset[i]) > end) {
+//java.io.IOException:  Offset 107810760 and length 875 don't match block BP-1698889102-192.168.0.191-1594708809587:blk_1073764539_23715 ( blockLen 6375424 )
+        if (startOffset[i] < 0 || startOffset[i] > end[i]       || (length[i] + startOffset[i]) > end[i]) {
           String msg = " Offset " + startOffset[i] + " and length " + length[i]
-                  + " don't match block " + block + " ( blockLen " + end + " )";
+                  + " don't match block " + block + " ( blockLen " + end[i] + " )";
           LOG.warn(datanode.getDNRegistrationForBP(block.getBlockPoolId()) +
                   ":sendBlock() : " + msg);
           throw new IOException(msg);
@@ -269,15 +272,15 @@ class BlockSenderBatch implements java.io.Closeable {
           if (tmpLen % chunkSize != 0) {
             tmpLen += (chunkSize - tmpLen % chunkSize);
           }
-          if (tmpLen < end) {
+          if (tmpLen < end[i]) {
             // will use on-disk checksum here since the end is a stable chunk
-            end = tmpLen;
+            end[i] = tmpLen;
           } else if (chunkChecksum != null) {
             // last chunk is changing. flag that we need to use in-memory checksum
             this.lastChunkChecksum = chunkChecksum;
           }
         }
-        endOffset[i] = end;
+        endOffset[i] = end[i];
 
         // seek to the right offsets
         if (offset[i] > 0 && checksumIn != null) {

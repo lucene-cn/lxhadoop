@@ -139,7 +139,7 @@ public class Sender implements DataTransferProtocol {
             .setCachingStrategy(getCachingStrategy(cachingStrategy))
             .build();
 
-    send(out, Op.READ_BLOCK, proto);
+    send(out, Op.READ_BLOCK_BATCH, proto);
   }
 
   @Override

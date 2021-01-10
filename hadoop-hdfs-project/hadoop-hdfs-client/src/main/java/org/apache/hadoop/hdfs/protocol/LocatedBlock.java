@@ -39,6 +39,7 @@ import com.google.common.collect.Lists;
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
 public class LocatedBlock {
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;

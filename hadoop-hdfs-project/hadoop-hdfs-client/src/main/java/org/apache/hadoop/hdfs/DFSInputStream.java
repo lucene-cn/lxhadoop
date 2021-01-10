@@ -1295,24 +1295,20 @@ public class DFSInputStream extends FSInputStream
                                         final long[] start, final long[] end, byte[][] buf, int[] offset,
                                         Map<ExtendedBlock, Set<DatanodeInfo>> corruptedBlockMap)
           throws IOException {
-    int[][] lengths=new int[1][];
-    int[] _lengths=new int[end.length];
+    int[] lengths=new int[end.length];
     for(int i=0;i< end.length;i++)
     {
-      _lengths[i] = (int) (end[i] - start[i] + 1);
+      lengths[i] = (int) (end[i] - start[i] + 1);
     }
-    lengths[0]=_lengths;
 
-    int[][] offsets=new int[1][];
-    offsets[0]=offset;
 
-    actualGetFromOneDataNodeBatch(datanode, start, end, buf, offsets,lengths, corruptedBlockMap);
+    actualGetFromOneDataNodeBatch(datanode, start, end, buf, offset,lengths, corruptedBlockMap);
   }
 
 
   void actualGetFromOneDataNodeBatch(final DNAddrPair datanode,
                                 final long[] startInBlk, final long[] endInBlk, byte[][] buf,
-                                int[][] offsets, int[][] lengths, Map<ExtendedBlock, Set<DatanodeInfo>> corruptedBlockMap)
+                                int[] offsets, int[] lengths, Map<ExtendedBlock, Set<DatanodeInfo>> corruptedBlockMap)
           throws IOException {
     DFSClientFaultInjector.get().startFetchFromDatanode();
     int refetchToken = 1; // only need to get a new access token once
@@ -1321,7 +1317,6 @@ public class DFSInputStream extends FSInputStream
     for(int i=0;i<startInBlk.length;i++)
     {
       len[i]=(int) (endInBlk[i] - startInBlk[i] + 1);
-      checkReadPortions(offsets[i], lengths[i], len[i]);
     }
 
 
@@ -1332,11 +1327,11 @@ public class DFSInputStream extends FSInputStream
         DFSClientFaultInjector.get().fetchFromDatanodeException();
         reader = getBlockReaderBatch(block, startInBlk, len, datanode.addr,
                 datanode.storageType, datanode.info);
-        for (int i = 0; i < offsets.length; i++) {
-          int nread = reader.readBatch(buf,offsets[i],lengths[i]);
+//        for (int i = 0; i < offsets.length; i++) {
+          int nread = reader.readBatch(buf,offsets,lengths);
           updateReadStatistics(readStatistics, nread, reader);
           int sumlen=0;
-          for(int  l:lengths[i])
+          for(int  l:lengths)
           {
             sumlen+=l;
           }
@@ -1344,7 +1339,7 @@ public class DFSInputStream extends FSInputStream
             throw new IOException("truncated return from reader.read(): " +
                     "excpected " + sumlen + ", got " + nread);
           }
-        }
+//        }
         DFSClientFaultInjector.get().readFromDatanodeDelay();
         return;
       } catch (ChecksumException e) {
@@ -1858,12 +1853,11 @@ public class DFSInputStream extends FSInputStream
   }
 
 
+  @Override
   public int[] readBatch(long[] position, byte[][] buffer, int[] offset, int[] length)
           throws IOException {
     validatePositionedReadArgs(position, buffer, offset, length);
-//    if (length == 0) {
-//      return 0;
-//    }
+
     try (TraceScope ignored = dfsClient.
             newPathTraceScope("DFSInputStream#byteArrayPread", src)) {
       return preadBatch(position, buffer, offset, length);
@@ -1882,33 +1876,33 @@ public class DFSInputStream extends FSInputStream
     long filelen = getFileLength();
 
     int[] realLen = Arrays.copyOf(length,length.length);
-    for(int i=0;i<length.length;i++)
-    {
+    HashMap<LocatedBlock, ArrayList<DfsInputStreamBatchGroup>> map = new HashMap<LocatedBlock, ArrayList<DfsInputStreamBatchGroup>>();
+
+    for(int i=0;i<length.length;i++) {
       if ((position[i] + length[i]) > filelen) {
-        realLen[i] = (int)(filelen - position[i]);
+        realLen[i] = (int) (filelen - position[i]);
       }
 
-      HashMap<LocatedBlock,ArrayList<DfsInputStreamBatchGroup>> map=new HashMap<LocatedBlock,ArrayList<DfsInputStreamBatchGroup>>();
 
 
       // determine the block and byte range within the block
       // corresponding to position and realLen
       List<LocatedBlock> blockRange = getBlockRange(position[i], realLen[i]);
-      int[] remaining =Arrays.copyOf(realLen,realLen.length);
+      int[] remaining = Arrays.copyOf(realLen, realLen.length);
       for (LocatedBlock blk : blockRange) {
         long targetStart = position[i] - blk.getStartOffset();
         long bytesToRead = Math.min(remaining[i], blk.getBlockSize() - targetStart);
 
-        DfsInputStreamBatchGroup item=new DfsInputStreamBatchGroup();
-        item.index=i;
-        item.buffer=buffer[i];
-        item.targetStart=targetStart;
-        item.bytesToRead=bytesToRead;
-        item.offset=offset[i];
-        ArrayList<DfsInputStreamBatchGroup> list=map.get(blk);
-        if(list==null)
-        {
-          list=new ArrayList<>();
+        DfsInputStreamBatchGroup item = new DfsInputStreamBatchGroup();
+        item.index = i;
+        item.buffer = buffer[i];
+        item.targetStart = targetStart;
+        item.bytesToRead = bytesToRead;
+        item.offset = offset[i];
+        ArrayList<DfsInputStreamBatchGroup> list = map.get(blk);
+        if (list == null) {
+          list = new ArrayList<>();
+          map.put(blk,list);
         }
         list.add(item);
 
@@ -1916,9 +1910,11 @@ public class DFSInputStream extends FSInputStream
         remaining[i] -= bytesToRead;
         position[i] += bytesToRead;
         offset[i] += bytesToRead;
+      }
     }
 
-      Map<ExtendedBlock,Set<DatanodeInfo>> corruptedBlockMap = new HashMap<>();
+      System.out.println("yanniandebug_blockSplit:"+map.size()+"@"+position.length);
+
 
       for(Entry<LocatedBlock,ArrayList<DfsInputStreamBatchGroup>> e:map.entrySet())
       {
@@ -1943,9 +1939,11 @@ public class DFSInputStream extends FSInputStream
           indexs[j]=item.index;
         }
 
+        boolean debug=false;
+        Map<ExtendedBlock,Set<DatanodeInfo>> corruptedBlockMap = new ConcurrentHashMap<>();
 
         try {
-          if (dfsClient.isHedgedReadsEnabled()) {
+          if (debug&&dfsClient.isHedgedReadsEnabled()) {
             hedgedFetchBlockByteRange(blk, targetStart,
                     targetEnd, bufferList, offsets, corruptedBlockMap);
           } else {
@@ -1964,7 +1962,7 @@ public class DFSInputStream extends FSInputStream
           dfsClient.stats.incrementBytesRead(len);
         }
       }
-    }
+
     return realLen;
   }
 
@@ -1989,7 +1987,7 @@ public class DFSInputStream extends FSInputStream
     // corresponding to position and realLen
     List<LocatedBlock> blockRange = getBlockRange(position, realLen);
     int remaining = realLen;
-    Map<ExtendedBlock,Set<DatanodeInfo>> corruptedBlockMap = new HashMap<>();
+    Map<ExtendedBlock,Set<DatanodeInfo>> corruptedBlockMap = new ConcurrentHashMap<>();
     for (LocatedBlock blk : blockRange) {
       long targetStart = position - blk.getStartOffset();
       long bytesToRead = Math.min(remaining, blk.getBlockSize() - targetStart);

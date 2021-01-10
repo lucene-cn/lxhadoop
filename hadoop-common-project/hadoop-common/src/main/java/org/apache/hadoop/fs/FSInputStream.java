@@ -200,12 +200,12 @@ public abstract class FSInputStream extends InputStream
 
       int[] nbytes = readBatch(position_nonzero, buffer_nonzero, offset_nonzero,length_nonzero);
 
-      for(int i=0;i<offset.length;i++)
+      for(int i=0;i<nbytes.length;i++)
       {
         if (nbytes[i] < 0) {
           throw new EOFException(FSExceptionMessages.EOF_IN_READ_FULLY);
         }
-        nread[i] += nbytes[i];
+        nread[index_list[i]] += nbytes[i];
       }
       nonZeroLen=cmpReadLength(nread , length);
     }
