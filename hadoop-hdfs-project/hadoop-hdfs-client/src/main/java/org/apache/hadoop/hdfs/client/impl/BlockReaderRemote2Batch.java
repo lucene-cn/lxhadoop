@@ -261,7 +261,7 @@ public class BlockReaderRemote2Batch implements BlockReader {
     this.packetReceiver=new PacketReceiverBatch[this.startOffset.length];
     for(int i=0;i<this.startOffset.length;i++)
     {
-      this.packetReceiver[i]=new PacketReceiverBatch(true);
+      this.packetReceiver[i]=new PacketReceiverBatch(false);
     }
 
   }

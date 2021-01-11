@@ -39,7 +39,12 @@ import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 class BlockSenderBatch implements java.io.Closeable {
   static final Logger LOG = DataNode.LOG;
@@ -50,6 +55,9 @@ class BlockSenderBatch implements java.io.Closeable {
    * transferTo() is enabled. 64KB is not that large. It could be larger, but
    * not sure if there will be much more improvement.
    */
+
+  private static final int GROUP_BATCH = 128;
+
   private static final int MIN_BUFFER_WITH_TRANSFERTO = 64*1024;
   private static final int IO_FILE_BUFFER_SIZE;
   static {
@@ -62,11 +70,11 @@ class BlockSenderBatch implements java.io.Closeable {
   /** the block to read from */
   private final ExtendedBlock block;
   /** Stream to read block data from */
-  private LXFSDataInputStream blockIn;
+  private LXFSDataInputStream[] blockIn_group;
   /** updated while using transferTo() */
   private long blockInPosition = -1;
   /** Stream to read checksum */
-  private LXFSDataInputStream checksumIn;
+  private LXFSDataInputStream[] checksumIn_group;
   /** Checksum utility */
   private final DataChecksum[] checksum;
   /** Initial position to read */
@@ -108,6 +116,7 @@ class BlockSenderBatch implements java.io.Closeable {
   private static final long CHUNK_SIZE = 512;
 
   long[] checksumSkip;
+  int total_len=0;
   BlockSenderBatch(ExtendedBlock block, long[] startOffset, long[] length,
                    boolean corruptChecksumOk, boolean verifyChecksum,
                    boolean sendChecksum, DataNode datanode, String clientTraceFmt,
@@ -132,10 +141,12 @@ class BlockSenderBatch implements java.io.Closeable {
       }
       long maxLen=0l;
       long maxBlockLen=0l;
+      total_len=0;
       for(int i=0;i<startOffset.length;i++)
       {
         maxBlockLen=Math.max(maxBlockLen,startOffset[i] + length[i]);
         maxLen=Math.max(maxLen,length[i]);
+        total_len+=length[i];
       }
       // if there is a write in progress
       if (replica instanceof ReplicaBeingWritten) {
@@ -182,6 +193,8 @@ class BlockSenderBatch implements java.io.Closeable {
        * False, False: throws IOException file not found
        */
       DataChecksum[] csum = new DataChecksum[startOffset.length];
+      this.checksumIn_group=new LXFSDataInputStream[1+(startOffset.length/GROUP_BATCH)];
+
       this.checksum=new DataChecksum[startOffset.length];
       this.chunkSize=new int[startOffset.length];
       this.lastChunkChecksum=new ChunkChecksum[startOffset.length];
@@ -201,11 +214,14 @@ class BlockSenderBatch implements java.io.Closeable {
 
             if (!replica.isOnTransientStorage() &&
                 metaIn.length() >= BlockMetadataHeader.getHeaderSize()) {
-              this.checksumIn=new LXFSDataInputStream(new LXBufferedFSInputStream(new LXLocalFSFileInputStream(metaIn), 1024));
+              for(int g=0;g<checksumIn_group.length;g++)
+              {
+                this.checksumIn_group[g]=new LXFSDataInputStream(new LXBufferedFSInputStream(new LXLocalFSFileInputStream(metaIn), 1024));
+              }
                   // HDFS-11160/HDFS-11056
               DataNodeFaultInjector.get() .waitForBlockSenderMetaInputStreamBeforeAppend();
 
-              DataChecksum  csum_share = BlockMetadataHeader.readDataChecksum(this.checksumIn, block);
+              DataChecksum  csum_share = BlockMetadataHeader.readDataChecksum(this.checksumIn_group[0], block);
               for(int i=0;i<startOffset.length;i++)
               {
                 csum[i]=csum_share.deepCopy();
@@ -227,8 +243,12 @@ class BlockSenderBatch implements java.io.Closeable {
           throw e;
         } finally {
           if (!keepMetaInOpen) {
-            this.checksumIn.close();
-            checksumIn = null;
+            for(int g=0;g<checksumIn_group.length;g++)
+            {
+              this.checksumIn_group[g].close();
+              checksumIn_group[g] = null;
+            }
+
 
           }
         }
@@ -301,7 +321,7 @@ class BlockSenderBatch implements java.io.Closeable {
         endOffset[i] = end[i];
 
         // seek to the right offsets
-        if (offset[i] > 0 && checksumIn != null) {
+        if (offset[i] > 0 && checksumIn_group[i/GROUP_BATCH] != null) {
           checksumSkip[i]=(offset[i] / chunkSize[i]) * checksumSize[i];
 
 
@@ -311,7 +331,13 @@ class BlockSenderBatch implements java.io.Closeable {
 
       Arrays.fill(seqno,0);
 
-      this.blockIn=new LXFSDataInputStream(new LXBufferedFSInputStream(new LXLocalFSFileInputStream(datanode.data.getBlockRandomAccessFile(block)), 1024));
+      this.blockIn_group=new LXFSDataInputStream[1+(startOffset.length/GROUP_BATCH)];
+    for(int g=0;g<this.checksumIn_group.length;g++)
+    {
+      this.blockIn_group[g] =new LXFSDataInputStream(new LXBufferedFSInputStream(new LXLocalFSFileInputStream(datanode.data.getBlockRandomAccessFile(block)), 1024));
+    }
+
+
 
 
     } catch (IOException ioe) {
@@ -361,22 +387,29 @@ class BlockSenderBatch implements java.io.Closeable {
   public void close() throws IOException {
 
     IOException ioe = null;
-    if(checksumIn!=null) {
-      try {
-        checksumIn.close(); // close checksum file
-      } catch (IOException e) {
-        ioe = e;
+    for(int g=0;g<checksumIn_group.length;g++)
+    {
+      if(checksumIn_group[g]!=null) {
+        try {
+          checksumIn_group[g].close(); // close checksum file
+        } catch (IOException e) {
+          ioe = e;
+        }
+        checksumIn_group[g] = null;
       }
-      checksumIn = null;
-    }   
-    if(blockIn!=null) {
-      try {
-        blockIn.close(); // close data file
-      } catch (IOException e) {
-        ioe = e;
-      }
-      blockIn = null;
     }
+    for(int g=0;g<blockIn_group.length;g++)
+    {
+      if(blockIn_group[g]!=null) {
+        try {
+          blockIn_group[g].close(); // close data file
+        } catch (IOException e) {
+          ioe = e;
+        }
+        blockIn_group[g] = null;
+      }
+    }
+
     if (volumeRef != null) {
       IOUtils.cleanup(null, volumeRef);
       volumeRef = null;
@@ -468,7 +501,7 @@ class BlockSenderBatch implements java.io.Closeable {
     int checksumOff = pkt.position();
     byte[] buf = pkt.array();
     
-    if (checksumSize[index] > 0 && checksumIn != null) {
+    if (checksumSize[index] > 0 && checksumIn_group[index/GROUP_BATCH] != null) {
       readChecksum(index,buf, checksumOff, checksumDataLen);
       // write in progress that we need to use to get last checksum
       if (lastDataPacket && lastChunkChecksum[index] != null) {
@@ -482,7 +515,7 @@ class BlockSenderBatch implements java.io.Closeable {
     
     int dataOff = checksumOff + checksumDataLen;
     if (!transferTo) { // normal transfer
-      this.blockIn.readFully(buf, dataOff, dataLen);
+      this.blockIn_group[index/GROUP_BATCH].readFully(buf, dataOff, dataLen);
       if (verifyChecksum) {
         verifyChecksum(index,buf, dataOff, dataLen, numChunks, checksumOff);
       }
@@ -525,16 +558,16 @@ class BlockSenderBatch implements java.io.Closeable {
    */
   private void readChecksum(int index,byte[] buf, final int checksumOffset,
       final int checksumLen) throws IOException {
-    if (checksumSize[index] <= 0 && checksumIn == null) {
+    if (checksumSize[index] <= 0 && checksumIn_group[index/GROUP_BATCH] == null) {
       return;
     }
     try {
-      checksumIn.readFully(buf, checksumOffset, checksumLen);
+      checksumIn_group[index/GROUP_BATCH].readFully(buf, checksumOffset, checksumLen);
     } catch (IOException e) {
       LOG.warn(" Could not read or failed to verify checksum for data"
           + " at offset " + offset + " for block " + block, e);
-      IOUtils.closeStream(checksumIn);
-      checksumIn = null;
+      IOUtils.closeStream(checksumIn_group[index/GROUP_BATCH]);
+      checksumIn_group[index/GROUP_BATCH] = null;
       if (corruptChecksumOk) {
         if (checksumOffset < checksumLen) {
           // Just fill the array with zeros.
@@ -607,79 +640,160 @@ class BlockSenderBatch implements java.io.Closeable {
     }
   }
 
+
+  final static AtomicReference<ExecutorService> threadPoolSplit = new AtomicReference<>(null);
+
+  final static Object LCK=new Object();
+  public static ExecutorService GET_POOL()
+  {
+
+    ExecutorService rtn=threadPoolSplit.get();
+    if(rtn==null)
+    {
+      synchronized (LCK)
+      {
+        rtn=threadPoolSplit.get();
+        if(rtn==null)
+        {
+          int thrs=Math.max(Runtime.getRuntime().availableProcessors()*2,12);
+
+          rtn=Executors.newFixedThreadPool(thrs);
+          threadPoolSplit.set(rtn);
+        }
+      }
+    }
+
+    return rtn;
+
+  }
   private long doSendBlock(DataOutputStream outbuffer, OutputStream baseStream,
-        DataTransferThrottler throttler) throws IOException {
+        final DataTransferThrottler throttler) throws IOException {
     long ts=System.currentTimeMillis();
     if (outbuffer == null) {
       throw new IOException( "out stream is null" );
     }
 
-    ByteArrayOutputStream out=new ByteArrayOutputStream();
 
     initialOffset=new long[offset.length];
     lastCacheDropOffset=new long[offset.length];
-    long totalRead = 0;
+    final AtomicLong totalRead = new AtomicLong(0);
 
-    final long lastPos=checksumIn.getPos();
-    try {
-      for(int i=0;i<offset.length;i++)
+
+    int eachGroupCount=512;
+    ArrayList<Integer> groupList=new ArrayList<>();
+    int currentGroup=-1;
+    int groupStart=0;
+
+    final List<Future<Object>> futures = new ArrayList<Future<Object>>(1+(offset.length/eachGroupCount));
+    ExecutorService pool=GET_POOL();
+
+    final long lastPos=checksumIn_group[0].getPos();
+
+    ArrayList<ByteArrayOutputStream> list=new ArrayList<>();
+
+    for(int i=0;i<offset.length;i++)
+    {
+      if(currentGroup==-1)
       {
-        this.blockIn.seek(this.offset[i]);
-        checksumIn.seek(lastPos);
-        if (checksumSkip[i] > 0) {
-          IOUtils.skipFully(checksumIn, checksumSkip[i]);
-        }
-          initialOffset[i] = offset[i];
-          lastCacheDropOffset[i] = initialOffset[i];
-          OutputStream streamForSendChunks = out;
+        groupStart=i;
+      }
+      int group=i/eachGroupCount;
+      if(currentGroup>=0&&currentGroup!=group)
+      {
 
-          int maxChunksPerPacket;
-          int pktBufSize = PacketHeaderBatch.PKT_MAX_HEADER_LEN;
-          boolean transferTo = false;//transferToAllowed && !verifyChecksum && baseStream instanceof SocketOutputStream;
-          if (transferTo) {
-            throw new IOException("not supported");
+        final int gstart=groupStart;
+        final int gend=i;
+        groupStart=i;
 
-          } else {
-            maxChunksPerPacket = Math.max(1, numberOfChunks(i,IO_FILE_BUFFER_SIZE));
-            // Packet size includes both checksum and data
-            pktBufSize += (chunkSize[i] + checksumSize[i]) * maxChunksPerPacket;
-          }
+        final ByteArrayOutputStream out=new ByteArrayOutputStream(1024);
+        list.add(out);
 
-          ByteBuffer pktBuf = ByteBuffer.allocate(pktBufSize);
+        futures.add(pool.submit(new Callable<Object>() {
+          @Override
+          public Object call() throws Exception {
+            for(int i=gstart;i<gend;i++)
+            {
+              blockIn_group[i/GROUP_BATCH].seek(offset[i]);
+              checksumIn_group[i/GROUP_BATCH].seek(lastPos);
+              if (checksumSkip[i] > 0) {
+                IOUtils.skipFully(checksumIn_group[i/GROUP_BATCH], checksumSkip[i]);
+              }
+              initialOffset[i] = offset[i];
+              lastCacheDropOffset[i] = initialOffset[i];
+              OutputStream streamForSendChunks = out;
 
-          while (endOffset[i] > offset[i] && !Thread.currentThread().isInterrupted()) {
-            long len = sendPacket(i,pktBuf, maxChunksPerPacket, streamForSendChunks, transferTo, throttler);
-            offset[i] += len;
-            totalRead += len + (numberOfChunks(i,len) * checksumSize[i]);
-            seqno[i]++;
-          }
-          // If this thread was interrupted, then it did not send the full block.
-          if (!Thread.currentThread().isInterrupted()) {
-            try {
+              int maxChunksPerPacket;
+              int pktBufSize = PacketHeaderBatch.PKT_MAX_HEADER_LEN;
+              boolean transferTo = false;//transferToAllowed && !verifyChecksum && baseStream instanceof SocketOutputStream;
+              if (transferTo) {
+                throw new IOException("not supported");
 
-              // send an empty packet to mark the end of the block
-              sendPacket(i,pktBuf, maxChunksPerPacket, streamForSendChunks, transferTo,  throttler);
-            } catch (IOException e) { //socket error
-              throw ioeToSocketException(e);
+              } else {
+                maxChunksPerPacket = Math.max(1, numberOfChunks(i,IO_FILE_BUFFER_SIZE));
+                // Packet size includes both checksum and data
+                pktBufSize += (chunkSize[i] + checksumSize[i]) * maxChunksPerPacket;
+              }
+
+              ByteBuffer pktBuf = ByteBuffer.allocate(pktBufSize);
+
+              while (endOffset[i] > offset[i] && !Thread.currentThread().isInterrupted()) {
+                long len = sendPacket(i,pktBuf, maxChunksPerPacket, streamForSendChunks, transferTo, throttler);
+                offset[i] += len;
+                totalRead.addAndGet(len + (numberOfChunks(i,len) * checksumSize[i]));
+                seqno[i]++;
+              }
+              // If this thread was interrupted, then it did not send the full block.
+              if (!Thread.currentThread().isInterrupted()) {
+                try {
+
+                  // send an empty packet to mark the end of the block
+                  sendPacket(i,pktBuf, maxChunksPerPacket, streamForSendChunks, transferTo,  throttler);
+                } catch (IOException e) { //socket error
+                  throw ioeToSocketException(e);
+                }
+
+              }
+
             }
-
+            return new Object();
           }
+        }));
 
+      }
+      groupList.add(i);
+
+    }
+
+
+    try {
+      for (Future<Object> future : futures) {
+        try {
+          future.get();
+        } catch (InterruptedException e) {
+          throw (InterruptedIOException) new InterruptedIOException().initCause(e);
+        } catch (ExecutionException e) {
+          throw new IOException(e);
+        }
       }
 
       sentEntireByteRange = true;
 
     } finally {
-      out.flush();
-      byte[] allBuffer=out.toByteArray();
-      outbuffer.writeInt(allBuffer.length);
-      outbuffer.write(allBuffer,0,allBuffer.length);
+      long diff=System.currentTimeMillis()-ts;
+
+      for(ByteArrayOutputStream out:list)
+      {
+        int sz=out.size();
+        outbuffer.writeInt(sz);
+        out.writeTo(outbuffer);
+      }
+
       outbuffer.flush();
       close();
 
-      LOG.info("yanniandebug_diff:"+(System.currentTimeMillis()-ts)+"@"+offset.length+"@"+allBuffer.length);
+      LOG.info("yanniandebug_diff:"+(System.currentTimeMillis()-ts)+"@"+diff+"@"+offset.length+"@"+list.size());
     }
-    return totalRead;
+    return totalRead.get();
   }
 
   private int writePacketHeader(ByteBuffer pkt, int dataLen,int index, int packetLen) {
