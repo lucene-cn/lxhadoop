@@ -271,12 +271,9 @@ class BlockSenderBatch implements java.io.Closeable {
       checksumSkip=new long[startOffset.length];
       seqno=new long[startOffset.length];
 
-//2021-01-10 18:18:57,299 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: yanniandebug:134217728@134217728@132766993@1022
-      LOG.info("yanniandebug_1:"+replica.getBytesOnDisk()+"@"+end+"@"+maxBlockLen+"@"+maxLen+"@"+checksumSize);
       for(int i=0;i<startOffset.length;i++)
       {
         length[i] = length[i] < 0 ? replicaVisibleLength : length[i];
-//java.io.IOException:  Offset 107810760 and length 875 don't match block BP-1698889102-192.168.0.191-1594708809587:blk_1073764539_23715 ( blockLen 6375424 )
         if (startOffset[i] < 0 || startOffset[i] > end[i]       || (length[i] + startOffset[i]) > end[i]) {
           String msg = " Offset " + startOffset[i] + " and length " + length[i]
                   + " don't match block " + block + " ( blockLen " + end[i] + " )";
@@ -456,14 +453,12 @@ class BlockSenderBatch implements java.io.Closeable {
   private int sendPacket(int index,ByteBuffer pkt, int maxChunks, OutputStream out,
       boolean transferTo, DataTransferThrottler throttler) throws IOException {
     int dataLen = (int) Math.min(endOffset[index] - offset[index], (chunkSize[index] * (long) maxChunks));
-    
     int numChunks = numberOfChunks(index,dataLen); // Number of chunks be sent in the packet
     int checksumDataLen = numChunks * checksumSize[index];
     int packetLen = dataLen + checksumDataLen + 4;
     //单条消息的最后一个包
     boolean lastDataPacket = offset[index]+ dataLen == endOffset[index] && dataLen > 0;
 
-    LOG.info("yanniandebug 1 writePacketHeader "+index);
     int headerLen = writePacketHeader(pkt, dataLen,index, packetLen);
     
     // Per above, the header doesn't start at the beginning of the
@@ -474,13 +469,9 @@ class BlockSenderBatch implements java.io.Closeable {
     byte[] buf = pkt.array();
     
     if (checksumSize[index] > 0 && checksumIn != null) {
-      LOG.info("yanniandebug 2 readChecksum "+index);
       readChecksum(index,buf, checksumOff, checksumDataLen);
-
       // write in progress that we need to use to get last checksum
       if (lastDataPacket && lastChunkChecksum[index] != null) {
-        LOG.info("yanniandebug 3 lastDataPacket "+index);
-
         int start = checksumOff + checksumDataLen - checksumSize[index];
         byte[] updatedChecksum = lastChunkChecksum[index].getChecksum();
         if (updatedChecksum != null) {
@@ -491,13 +482,8 @@ class BlockSenderBatch implements java.io.Closeable {
     
     int dataOff = checksumOff + checksumDataLen;
     if (!transferTo) { // normal transfer
-//      IOUtils.readFully(in, buf, dataOff, dataLen);
-      LOG.info("yanniandebug 4 readFully "+index +"@"+dataOff+"@"+dataLen);
-
       this.blockIn.readFully(buf, dataOff, dataLen);
       if (verifyChecksum) {
-        LOG.info("yanniandebug 5 verifyChecksum "+index +"@"+dataOff+"@"+dataLen);
-
         verifyChecksum(index,buf, dataOff, dataLen, numChunks, checksumOff);
       }
     }
@@ -505,22 +491,7 @@ class BlockSenderBatch implements java.io.Closeable {
     try {
       if (transferTo) {
         throw new IOException("not supported");
-//        SocketOutputStream sockOut = (SocketOutputStream)out;
-//        // First write header and checksums
-//        sockOut.write(buf, headerOff, dataOff - headerOff);
-//
-//        // no need to flush since we know out is not a buffered stream
-//        FileChannel fileCh = (blockIn).getChannel();
-//        LongWritable waitTime = new LongWritable();
-//        LongWritable transferTime = new LongWritable();
-//        sockOut.transferToFully(fileCh, blockInPosition, dataLen,
-//            waitTime, transferTime);
-//        datanode.metrics.addSendDataPacketBlockedOnNetworkNanos(waitTime.get());
-//        datanode.metrics.addSendDataPacketTransferNanos(transferTime.get());
-//        blockInPosition += dataLen;
       } else {
-        LOG.info("yanniandebug 6 write "+index +"@"+dataOff+"@"+dataLen);
-
         // normal transfer
         out.write(buf, headerOff, dataOff + dataLen - headerOff);
       }
@@ -636,12 +607,15 @@ class BlockSenderBatch implements java.io.Closeable {
     }
   }
 
-  private long doSendBlock(DataOutputStream out, OutputStream baseStream,
+  private long doSendBlock(DataOutputStream outbuffer, OutputStream baseStream,
         DataTransferThrottler throttler) throws IOException {
     long ts=System.currentTimeMillis();
-    if (out == null) {
+    if (outbuffer == null) {
       throw new IOException( "out stream is null" );
     }
+
+    ByteArrayOutputStream out=new ByteArrayOutputStream();
+
     initialOffset=new long[offset.length];
     lastCacheDropOffset=new long[offset.length];
     long totalRead = 0;
@@ -650,38 +624,21 @@ class BlockSenderBatch implements java.io.Closeable {
     try {
       for(int i=0;i<offset.length;i++)
       {
-LOG.info("yanniandebug send:"+i);
         this.blockIn.seek(this.offset[i]);
-//        this.checksum[i].reset();
         checksumIn.seek(lastPos);
-        // note blockInStream is seeked when created below
         if (checksumSkip[i] > 0) {
-          // Should we use seek() for checksum file as well?
           IOUtils.skipFully(checksumIn, checksumSkip[i]);
         }
-
-
-
           initialOffset[i] = offset[i];
           lastCacheDropOffset[i] = initialOffset[i];
-
-
           OutputStream streamForSendChunks = out;
-
 
           int maxChunksPerPacket;
           int pktBufSize = PacketHeaderBatch.PKT_MAX_HEADER_LEN;
           boolean transferTo = false;//transferToAllowed && !verifyChecksum && baseStream instanceof SocketOutputStream;
           if (transferTo) {
             throw new IOException("not supported");
-//
-////            FileChannel fileChannel = blockIn.getChannel();
-//            blockInPosition =blockIn.getPos();//fileChannel.position();
-//            streamForSendChunks = baseStream;
-//            maxChunksPerPacket = numberOfChunks(TRANSFERTO_BUFFER_SIZE);
-//
-//            // Smaller packet size to only hold checksum when doing transferTo
-//            pktBufSize += checksumSize * maxChunksPerPacket;
+
           } else {
             maxChunksPerPacket = Math.max(1, numberOfChunks(i,IO_FILE_BUFFER_SIZE));
             // Packet size includes both checksum and data
@@ -699,7 +656,6 @@ LOG.info("yanniandebug send:"+i);
           // If this thread was interrupted, then it did not send the full block.
           if (!Thread.currentThread().isInterrupted()) {
             try {
-              LOG.info("yanniandebug sendempty:"+i);
 
               // send an empty packet to mark the end of the block
               sendPacket(i,pktBuf, maxChunksPerPacket, streamForSendChunks, transferTo,  throttler);
@@ -709,16 +665,19 @@ LOG.info("yanniandebug send:"+i);
 
           }
 
-
       }
 
       sentEntireByteRange = true;
 
     } finally {
       out.flush();
+      byte[] allBuffer=out.toByteArray();
+      outbuffer.writeInt(allBuffer.length);
+      outbuffer.write(allBuffer,0,allBuffer.length);
+      outbuffer.flush();
       close();
 
-      LOG.info("yanniandebug_diff:"+(System.currentTimeMillis()-ts)+"@"+offset.length);
+      LOG.info("yanniandebug_diff:"+(System.currentTimeMillis()-ts)+"@"+offset.length+"@"+allBuffer.length);
     }
     return totalRead;
   }
@@ -730,8 +689,6 @@ LOG.info("yanniandebug send:"+i);
         (dataLen == 0), dataLen, false);
 
     int size = header.getSerializedSize();
-    //2021-01-10 21:03:12,238 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: yanniandebug:33@40@545@1024@0@1036
-    LOG.info("yanniandebug:"+PacketHeaderBatch.PKT_MAX_HEADER_LEN +"@"+ size+"@"+pkt.capacity()+"@"+dataLen+"@"+index+"@"+packetLen);
 
     pkt.position(PacketHeaderBatch.PKT_MAX_HEADER_LEN - size);
     header.putInBuffer(pkt);
