@@ -225,6 +225,20 @@ public class DataChecksum implements Checksum {
     summer = checksum;
     bytesPerChecksum = chunkSize;
   }
+
+  public DataChecksum deepCopy()
+  {
+    switch ( type ) {
+      case NULL :
+        return new DataChecksum(type, new ChecksumNull(), bytesPerChecksum );
+      case CRC32 :
+        return new DataChecksum(type, newCrc32(), bytesPerChecksum );
+      case CRC32C:
+        return new DataChecksum(type, new PureJavaCrc32C(), bytesPerChecksum);
+      default:
+        return this;
+    }
+  }
   
   /** @return the checksum algorithm type. */
   public Type getChecksumType() {

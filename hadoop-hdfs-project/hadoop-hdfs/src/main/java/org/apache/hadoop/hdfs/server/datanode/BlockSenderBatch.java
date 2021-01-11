@@ -208,7 +208,7 @@ class BlockSenderBatch implements java.io.Closeable {
               DataChecksum  csum_share = BlockMetadataHeader.readDataChecksum(this.checksumIn, block);
               for(int i=0;i<startOffset.length;i++)
               {
-                csum[i]=csum_share;
+                csum[i]=csum_share.deepCopy();
               }
 
               keepMetaInOpen = true;
@@ -478,7 +478,7 @@ class BlockSenderBatch implements java.io.Closeable {
       readChecksum(index,buf, checksumOff, checksumDataLen);
 
       // write in progress that we need to use to get last checksum
-      if (lastDataPacket && lastChunkChecksum != null) {
+      if (lastDataPacket && lastChunkChecksum[index] != null) {
         LOG.info("yanniandebug 3 lastDataPacket "+index);
 
         int start = checksumOff + checksumDataLen - checksumSize[index];
@@ -638,6 +638,7 @@ class BlockSenderBatch implements java.io.Closeable {
 
   private long doSendBlock(DataOutputStream out, OutputStream baseStream,
         DataTransferThrottler throttler) throws IOException {
+    long ts=System.currentTimeMillis();
     if (out == null) {
       throw new IOException( "out stream is null" );
     }
@@ -651,7 +652,7 @@ class BlockSenderBatch implements java.io.Closeable {
       {
 LOG.info("yanniandebug send:"+i);
         this.blockIn.seek(this.offset[i]);
-        this.checksum[i].reset();
+//        this.checksum[i].reset();
         checksumIn.seek(lastPos);
         // note blockInStream is seeked when created below
         if (checksumSkip[i] > 0) {
@@ -716,6 +717,8 @@ LOG.info("yanniandebug send:"+i);
     } finally {
       out.flush();
       close();
+
+      LOG.info("yanniandebug_diff:"+(System.currentTimeMillis()-ts)+"@"+offset.length);
     }
     return totalRead;
   }

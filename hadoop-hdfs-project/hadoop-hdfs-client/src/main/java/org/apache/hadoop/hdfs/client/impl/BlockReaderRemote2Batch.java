@@ -65,7 +65,7 @@ public class BlockReaderRemote2Batch implements BlockReader {
   private final ReadableByteChannel in;
 
   private DataChecksum[] checksum;
-  private final PacketReceiverBatch packetReceiver = new PacketReceiverBatch(true);
+  private final PacketReceiverBatch[] packetReceiver ;
 
   final ByteBuffer[] curDataSlice;
 
@@ -102,20 +102,23 @@ public class BlockReaderRemote2Batch implements BlockReader {
     for(int i=0;i<off.length;i++)
     {
       LOG.info("yanniandebug:"+i);
-      if (curDataSlice[i] == null ||
-              curDataSlice[i].remaining() == 0 && bytesNeededToFinish[this.index] > 0||((this.index+1)<this.bytesNeededToFinish.length)) {
+      if (curDataSlice[i] == null || curDataSlice[i].remaining() == 0 && bytesNeededToFinish[i] > 0) { //||((i+1)<this.bytesNeededToFinish.length)
         try (TraceScope ignored = tracer[i].newScope("BlockReaderRemote2#readNextPacket(" + blockId + ")")) {
           readNextPacket(i);
         }
       }
+      LOG.info("yanniandebug remaining:"+i);
 
       if (curDataSlice[i].remaining() == 0) {
         // we're at EOF now
         return -1;
       }
+      LOG.info("yanniandebug curDataSlice[i].get:"+i);
 
-      int nRead = Math.min(curDataSlice[i].remaining(), len[this.index]);
-      curDataSlice[i].get(buf[this.index], off[this.index], nRead);
+      int nRead = Math.min(curDataSlice[i].remaining(), len[i]);
+      curDataSlice[i].get(buf[i], off[i], nRead);
+      LOG.info("yanniandebug_nRead:"+i+"@"+nRead);
+
       amt+=nRead;
     }
 
@@ -139,44 +142,38 @@ public class BlockReaderRemote2Batch implements BlockReader {
     //Read packet headers.
     LOG.info("yanniandebug 1 readNextPacket "+i);
 
-    packetReceiver.receiveNextPacket(in);
+    packetReceiver[i].receiveNextPacket(in);
+    LOG.info("yanniandebug 1.1 getHeader "+i);
 
-    PacketHeaderBatch curHeader = packetReceiver.getHeader();
-    curDataSlice[i] = packetReceiver.getDataSlice();
-    assert curDataSlice[i].capacity() == curHeader.getDataLen();
-
+    PacketHeaderBatch curHeader = packetReceiver[i].getHeader();
     this.index= (int) curHeader.getBatchIndex();
     if(this.index!=i)
     {
       throw new IOException("out of order "+this.index+"@"+i);
     }
+    LOG.info("yanniandebug 1.2 getDataSlice "+i);
+
+    curDataSlice[i] = packetReceiver[i].getDataSlice();
+    assert curDataSlice[i].capacity() == curHeader.getDataLen();
 
     // Sanity check the lengths
     if (!curHeader.sanityCheck(lastSeqNo[i])) {
-      throw new IOException("BlockReader: error in packet header " +
-          curHeader);
+      throw new IOException("BlockReader: error in packet header " +  curHeader);
     }
+    LOG.info("yanniandebug 1.3 curHeader.getDataLen() "+i+"@"+curHeader.getDataLen());
 
     if (curHeader.getDataLen() > 0) {
 
       int chunks = 1 + (curHeader.getDataLen() - 1) / bytesPerChecksum[i];
       int checksumsLen = chunks * checksumSize[i];
-      LOG.info(" yanniandebug chunks " +checksumsLen);
+      LOG.info(" yanniandebug 1.4 chunks " +checksumsLen);
 
-      assert packetReceiver.getChecksumSlice().capacity() == checksumsLen :
-          "checksum slice capacity=" +
-              packetReceiver.getChecksumSlice().capacity() +
-              " checksumsLen=" + checksumsLen;
+      assert packetReceiver[i].getChecksumSlice().capacity() == checksumsLen : "checksum slice capacity=" + packetReceiver[i].getChecksumSlice().capacity() + " checksumsLen=" + checksumsLen;
 
       lastSeqNo[i] = curHeader.getSeqno();
       if (verifyChecksum && curDataSlice[i].remaining() > 0) {
-        // N.B.: the checksum error offset reported here is actually
-        // relative to the start of the block, not the start of the file.
-        // This is slightly misleading, but preserves the behavior from
-        // the older BlockReader.
-        checksum[i].verifyChunkedSums(curDataSlice[i],
-            packetReceiver.getChecksumSlice(),
-            filename, curHeader.getOffsetInBlock());
+        LOG.info(" yanniandebug 2 readChecksum " +checksumsLen);
+        checksum[i].verifyChunkedSums(curDataSlice[i],  packetReceiver[i].getChecksumSlice(), filename, curHeader.getOffsetInBlock());
       }
       bytesNeededToFinish[this.index] -= curHeader.getDataLen();
     }
@@ -193,16 +190,14 @@ public class BlockReaderRemote2Batch implements BlockReader {
     if (bytesNeededToFinish[this.index] <= 0) {
       LOG.info(" yanniandebug readTrailingEmptyPacket ");
 
-      readTrailingEmptyPacket();
+      readTrailingEmptyPacket(this.index);
       if((this.index+1)>=this.bytesNeededToFinish.length)
       {
         if (verifyChecksum) {
           LOG.info(" yanniandebug sendReadResult CHECKSUM_OK");
-
           sendReadResult(Status.CHECKSUM_OK);
         } else {
           LOG.info(" yanniandebug sendReadResult SUCCESS");
-
           sendReadResult(Status.SUCCESS);
         }
       }
@@ -216,11 +211,11 @@ public class BlockReaderRemote2Batch implements BlockReader {
 
   }
 
-  private void readTrailingEmptyPacket() throws IOException {
+  private void readTrailingEmptyPacket(int i) throws IOException {
 
-    packetReceiver.receiveNextPacket(in);
+    packetReceiver[i].receiveNextPacket(in);
 
-    PacketHeaderBatch trailer = packetReceiver.getHeader();
+    PacketHeaderBatch trailer = packetReceiver[i].getHeader();
     if (!trailer.isLastPacketInBlock() ||
         trailer.getDataLen() != 0) {
       throw new IOException("Expected empty end-of-read packet! Header: " +
@@ -271,12 +266,22 @@ public class BlockReaderRemote2Batch implements BlockReader {
       this.tracer[i] = tracer;
     }
 
+    this.packetReceiver=new PacketReceiverBatch[this.startOffset.length];
+    for(int i=0;i<this.startOffset.length;i++)
+    {
+      this.packetReceiver[i]=new PacketReceiverBatch(true);
+    }
+
   }
 
 
   @Override
   public synchronized void close() throws IOException {
-    packetReceiver.close();
+    for(int i=0;i<this.startOffset.length;i++)
+    {
+      packetReceiver[i].close();
+
+    }
     for(int i=0;i<startOffset.length;i++)
     {
       startOffset[i] = -1;
