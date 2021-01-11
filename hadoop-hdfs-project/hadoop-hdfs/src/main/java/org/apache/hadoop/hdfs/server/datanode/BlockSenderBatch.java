@@ -805,17 +805,25 @@ class BlockSenderBatch implements java.io.Closeable {
     } finally {
       long diff=System.currentTimeMillis()-ts;
 
+      int sumsz=0;
       for(ByteArrayOutputStream out:list)
       {
         int sz=out.size();
-        outbuffer.writeInt(sz);
+        sumsz+=sz;
+      }
+
+      outbuffer.writeInt(sumsz);
+
+
+      for(ByteArrayOutputStream out:list)
+      {
         out.writeTo(outbuffer);
       }
 
       outbuffer.flush();
       close();
 
-      LOG.info("yanniandebug_diff:"+(System.currentTimeMillis()-ts)+"@"+diff+"@"+offset.length+"@"+list.size());
+      LOG.info("yanniandebug_diff:"+(System.currentTimeMillis()-ts)+"@"+diff+"@"+offset.length+"@"+list.size()+"@"+sumsz);
     }
     return totalRead.get();
   }
