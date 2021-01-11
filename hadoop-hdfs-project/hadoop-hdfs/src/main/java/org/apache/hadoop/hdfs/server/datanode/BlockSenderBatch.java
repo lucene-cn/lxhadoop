@@ -666,6 +666,51 @@ class BlockSenderBatch implements java.io.Closeable {
     return rtn;
 
   }
+
+  private Object doSendGroup(int gstart, int gend, OutputStream out, final DataTransferThrottler throttler, final long lastPos, final AtomicLong totalRead) throws IOException {
+    for(int i=gstart;i<gend;i++)
+    {
+      blockIn_group[i/GROUP_BATCH].seek(offset[i]);
+      checksumIn_group[i/GROUP_BATCH].seek(lastPos);
+      if (checksumSkip[i] > 0) {
+        IOUtils.skipFully(checksumIn_group[i/GROUP_BATCH], checksumSkip[i]);
+      }
+      initialOffset[i] = offset[i];
+      lastCacheDropOffset[i] = initialOffset[i];
+      OutputStream streamForSendChunks = out;
+
+      int maxChunksPerPacket;
+      int pktBufSize = PacketHeaderBatch.PKT_MAX_HEADER_LEN;
+      boolean transferTo = false;//transferToAllowed && !verifyChecksum && baseStream instanceof SocketOutputStream;
+      if (transferTo) {
+        throw new IOException("not supported");
+
+      } else {
+        maxChunksPerPacket = Math.max(1, numberOfChunks(i,IO_FILE_BUFFER_SIZE));
+        // Packet size includes both checksum and data
+        pktBufSize += (chunkSize[i] + checksumSize[i]) * maxChunksPerPacket;
+      }
+
+      ByteBuffer pktBuf = ByteBuffer.allocate(pktBufSize);
+
+      while (endOffset[i] > offset[i] && !Thread.currentThread().isInterrupted()) {
+        long len = sendPacket(i,pktBuf, maxChunksPerPacket, streamForSendChunks, transferTo, throttler);
+        offset[i] += len;
+        totalRead.addAndGet(len + (numberOfChunks(i,len) * checksumSize[i]));
+        seqno[i]++;
+      }
+      // If this thread was interrupted, then it did not send the full block.
+      try {
+
+        // send an empty packet to mark the end of the block
+        sendPacket(i,pktBuf, maxChunksPerPacket, streamForSendChunks, transferTo,  throttler);
+      } catch (IOException e) { //socket error
+        throw ioeToSocketException(e);
+      }
+
+    }
+    return new Object();
+  }
   private long doSendBlock(DataOutputStream outbuffer, OutputStream baseStream,
         final DataTransferThrottler throttler) throws IOException {
     long ts=System.currentTimeMillis();
@@ -679,12 +724,10 @@ class BlockSenderBatch implements java.io.Closeable {
     final AtomicLong totalRead = new AtomicLong(0);
 
 
-    int eachGroupCount=512;
-    ArrayList<Integer> groupList=new ArrayList<>();
     int currentGroup=-1;
     int groupStart=0;
 
-    final List<Future<Object>> futures = new ArrayList<Future<Object>>(1+(offset.length/eachGroupCount));
+    final List<Future<Object>> futures = new ArrayList<Future<Object>>(1+(offset.length/GROUP_BATCH));
     ExecutorService pool=GET_POOL();
 
     final long lastPos=checksumIn_group[0].getPos();
@@ -696,14 +739,18 @@ class BlockSenderBatch implements java.io.Closeable {
       if(currentGroup==-1)
       {
         groupStart=i;
+        currentGroup=i/GROUP_BATCH;
+
+        continue;
       }
-      int group=i/eachGroupCount;
+      int group=i/GROUP_BATCH;
       if(currentGroup>=0&&currentGroup!=group)
       {
 
         final int gstart=groupStart;
         final int gend=i;
         groupStart=i;
+        currentGroup=group;
 
         final ByteArrayOutputStream out=new ByteArrayOutputStream(1024);
         list.add(out);
@@ -711,58 +758,35 @@ class BlockSenderBatch implements java.io.Closeable {
         futures.add(pool.submit(new Callable<Object>() {
           @Override
           public Object call() throws Exception {
-            for(int i=gstart;i<gend;i++)
-            {
-              blockIn_group[i/GROUP_BATCH].seek(offset[i]);
-              checksumIn_group[i/GROUP_BATCH].seek(lastPos);
-              if (checksumSkip[i] > 0) {
-                IOUtils.skipFully(checksumIn_group[i/GROUP_BATCH], checksumSkip[i]);
-              }
-              initialOffset[i] = offset[i];
-              lastCacheDropOffset[i] = initialOffset[i];
-              OutputStream streamForSendChunks = out;
-
-              int maxChunksPerPacket;
-              int pktBufSize = PacketHeaderBatch.PKT_MAX_HEADER_LEN;
-              boolean transferTo = false;//transferToAllowed && !verifyChecksum && baseStream instanceof SocketOutputStream;
-              if (transferTo) {
-                throw new IOException("not supported");
-
-              } else {
-                maxChunksPerPacket = Math.max(1, numberOfChunks(i,IO_FILE_BUFFER_SIZE));
-                // Packet size includes both checksum and data
-                pktBufSize += (chunkSize[i] + checksumSize[i]) * maxChunksPerPacket;
-              }
-
-              ByteBuffer pktBuf = ByteBuffer.allocate(pktBufSize);
-
-              while (endOffset[i] > offset[i] && !Thread.currentThread().isInterrupted()) {
-                long len = sendPacket(i,pktBuf, maxChunksPerPacket, streamForSendChunks, transferTo, throttler);
-                offset[i] += len;
-                totalRead.addAndGet(len + (numberOfChunks(i,len) * checksumSize[i]));
-                seqno[i]++;
-              }
-              // If this thread was interrupted, then it did not send the full block.
-              if (!Thread.currentThread().isInterrupted()) {
-                try {
-
-                  // send an empty packet to mark the end of the block
-                  sendPacket(i,pktBuf, maxChunksPerPacket, streamForSendChunks, transferTo,  throttler);
-                } catch (IOException e) { //socket error
-                  throw ioeToSocketException(e);
-                }
-
-              }
-
-            }
-            return new Object();
+            return doSendGroup(gstart,gend,out,throttler,lastPos,totalRead);
           }
         }));
 
       }
-      groupList.add(i);
 
     }
+
+    {
+      final int gstart=groupStart;
+      final int gend=offset.length;
+
+      if(gstart<gend)
+      {
+        final ByteArrayOutputStream out=new ByteArrayOutputStream(1024);
+        list.add(out);
+
+        futures.add(pool.submit(new Callable<Object>() {
+          @Override
+          public Object call() throws Exception {
+            return doSendGroup(gstart,gend,out,throttler,lastPos,totalRead);
+          }
+        }));
+      }
+
+    }
+
+
+
 
 
     try {
