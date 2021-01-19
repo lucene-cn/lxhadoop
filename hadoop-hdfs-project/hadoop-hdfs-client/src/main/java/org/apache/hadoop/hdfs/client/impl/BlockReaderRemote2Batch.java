@@ -98,8 +98,11 @@ public class BlockReaderRemote2Batch implements BlockReader {
   @Override
   public int readBatch(byte[][] buf, int[] off, int[] len) throws IOException {
 
+    long ts=System.currentTimeMillis();
     byte[] byteBuffer=new byte[this.inSocket.readInt()];
     this.inSocket.readFully(byteBuffer,0,byteBuffer.length);
+    long ts1=System.currentTimeMillis();
+
     ByteArrayInputStream inputRam=new ByteArrayInputStream(byteBuffer);
 
     int amt=0;
@@ -121,6 +124,7 @@ public class BlockReaderRemote2Batch implements BlockReader {
 
       amt+=nRead;
     }
+    LOG.info("yanniandebug_diff:"+(System.currentTimeMillis()-ts)+"@"+(ts1-ts));
 
     return amt;
   }
