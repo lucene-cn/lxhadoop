@@ -101,7 +101,6 @@ public class BlockReaderRemote2Batch implements BlockReader {
     long ts=System.currentTimeMillis();
     byte[] byteBuffer=new byte[this.inSocket.readInt()];
     this.inSocket.readFully(byteBuffer,0,byteBuffer.length);
-    long ts1=System.currentTimeMillis();
 
     ByteArrayInputStream inputRam=new ByteArrayInputStream(byteBuffer);
 
@@ -124,6 +123,8 @@ public class BlockReaderRemote2Batch implements BlockReader {
 
       amt+=nRead;
     }
+
+    LOG.info("yanniandebug:"+(System.currentTimeMillis()-ts)+"@"+byteBuffer.length);
 
     return amt;
   }
