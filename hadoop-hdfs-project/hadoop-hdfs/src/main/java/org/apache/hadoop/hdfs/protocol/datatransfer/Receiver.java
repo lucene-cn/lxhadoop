@@ -106,8 +106,6 @@ public abstract class Receiver implements DataTransferProtocol {
 	case READ_BLOCK_BATCH:
 	  long ts=System.currentTimeMillis();
       opReadBlockBatch();
-      LOG.info("yanniandebug_diff opReadBlockBatch:"+(System.currentTimeMillis()-ts));
-
       break; 
     case WRITE_BLOCK:
       opWriteBlock(in);

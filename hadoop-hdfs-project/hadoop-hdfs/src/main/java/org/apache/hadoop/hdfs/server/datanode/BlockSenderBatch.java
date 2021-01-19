@@ -655,8 +655,9 @@ class BlockSenderBatch implements java.io.Closeable {
         rtn=threadPoolSplit.get();
         if(rtn==null)
         {
-          int thrs=Math.max(Runtime.getRuntime().availableProcessors()*2,12);
+          int thrs=Math.max(Runtime.getRuntime().availableProcessors()*4,12);
 
+          LOG.info("batch_process_thr:"+thrs);
           rtn=Executors.newFixedThreadPool(thrs);
           threadPoolSplit.set(rtn);
         }
@@ -693,7 +694,7 @@ class BlockSenderBatch implements java.io.Closeable {
 
       ByteBuffer pktBuf = ByteBuffer.allocate(pktBufSize);
 
-      while (endOffset[i] > offset[i] && !Thread.currentThread().isInterrupted()) {
+      while (endOffset[i] > offset[i]) {
         long len = sendPacket(i,pktBuf, maxChunksPerPacket, streamForSendChunks, transferTo, throttler);
         offset[i] += len;
         totalRead.addAndGet(len + (numberOfChunks(i,len) * checksumSize[i]));
@@ -713,7 +714,6 @@ class BlockSenderBatch implements java.io.Closeable {
   }
   private long doSendBlock(DataOutputStream outbuffer, OutputStream baseStream,
         final DataTransferThrottler throttler) throws IOException {
-    long ts=System.currentTimeMillis();
     if (outbuffer == null) {
       throw new IOException( "out stream is null" );
     }
@@ -803,7 +803,6 @@ class BlockSenderBatch implements java.io.Closeable {
       sentEntireByteRange = true;
 
     } finally {
-      long diff=System.currentTimeMillis()-ts;
 
       int sumsz=0;
       for(ByteArrayOutputStream out:list)
@@ -823,7 +822,6 @@ class BlockSenderBatch implements java.io.Closeable {
       outbuffer.flush();
       close();
 
-      LOG.info("yanniandebug_diff:"+(System.currentTimeMillis()-ts)+"@"+diff+"@"+offset.length+"@"+list.size()+"@"+sumsz);
     }
     return totalRead.get();
   }

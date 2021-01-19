@@ -609,6 +609,47 @@ public class DFSInputStream extends FSInputStream
     }
   }
 
+  private List<LocatedBlock> getFinalizedBlockRangeBatch(
+          long offset, long length) throws IOException {
+      List<LocatedBlock> blockRange = new ArrayList<>();
+      // search cached blocks first
+      long remaining = length;
+      long curOff = offset;
+      while(remaining > 0) {
+        LocatedBlock blk = fetchBlockAtBatch(curOff, remaining, true);
+        assert curOff >= blk.getStartOffset() : "Block not found";
+        blockRange.add(blk);
+        long bytesRead = blk.getStartOffset() + blk.getBlockSize() - curOff;
+        remaining -= bytesRead;
+        curOff += bytesRead;
+      }
+      return blockRange;
+  }
+
+
+  private LocatedBlock fetchBlockAtBatch(long offset, long length, boolean useCache)
+          throws IOException {
+
+      int targetBlockIdx = locatedBlocks.findBlock(offset);
+      if (targetBlockIdx < 0) { // block is not cached
+        targetBlockIdx = LocatedBlocks.getInsertIndex(targetBlockIdx);
+        useCache = false;
+      }
+    synchronized(infoLock) {
+      if (!useCache) { // fetch blocks
+        final LocatedBlocks newBlocks = (length == 0)
+                ? dfsClient.getLocatedBlocks(src, offset)
+                : dfsClient.getLocatedBlocks(src, offset, length);
+        if (newBlocks == null || newBlocks.locatedBlockCount() == 0) {
+          throw new EOFException("Could not find target position " + offset);
+        }
+        locatedBlocks.insertRange(targetBlockIdx, newBlocks.getLocatedBlocks());
+      }
+    }
+      return locatedBlocks.get(targetBlockIdx);
+
+  }
+
   /**
    * Open a DataInputStream to a DataNode so that it can be read from.
    * We get block ID and the IDs of the destinations at startup, from the namenode.
@@ -1309,7 +1350,6 @@ public class DFSInputStream extends FSInputStream
                                 final long[] startInBlk, final long[] endInBlk, byte[][] buf,
                                 int[] offsets, int[] lengths, Map<ExtendedBlock, Set<DatanodeInfo>> corruptedBlockMap)
           throws IOException {
-    long ts=System.currentTimeMillis();
 
     DFSClientFaultInjector.get().startFetchFromDatanode();
     int refetchToken = 1; // only need to get a new access token once
@@ -1327,7 +1367,6 @@ public class DFSInputStream extends FSInputStream
         DFSClientFaultInjector.get().fetchFromDatanodeException();
         reader = getBlockReaderBatch(block, startInBlk, len, datanode.addr,
                 datanode.storageType, datanode.info);
-        long ts1=System.currentTimeMillis();
 
 //        for (int i = 0; i < offsets.length; i++) {
           int nread = reader.readBatch(buf,offsets,lengths);
@@ -1384,13 +1423,11 @@ public class DFSInputStream extends FSInputStream
         // encryption key failures.
         block = refreshLocatedBlock(block);
       } finally {
-        long ts1=System.currentTimeMillis();
 
         if (reader != null) {
           reader.close();
         }
 
-        LOG.info("yanniandebug_diffstreame:"+(System.currentTimeMillis()-ts)+"@"+(ts1-ts));
 
       }
     }
@@ -1903,9 +1940,65 @@ public class DFSInputStream extends FSInputStream
 
   }
 
+
+
+
+  private List<List<LocatedBlock>> getBlockRange(final long[] offset,
+                                                 final long[] length)  throws IOException {
+    final List<List<LocatedBlock>> rtn=new ArrayList<>();
+    final long lengthOfCompleteBlk;
+    synchronized(infoLock) {
+     lengthOfCompleteBlk = locatedBlocks.getFileLength();
+    }
+
+    final List<Future<Object>> futures = new ArrayList<Future<Object>>(1+(offset.length));
+    ExecutorService pool=GET_POOL();
+      for(int i=0;i<offset.length;i++)
+      {
+        final List<LocatedBlock> blocks=new ArrayList<>();
+        rtn.add(blocks);
+
+        final int index=i;
+        futures.add(pool.submit(new Callable<Object>() {
+          @Override
+          public Object call() throws Exception {
+
+            //这里慢是因为findBlock采用的binarySearch排序实现的,性能不怎么样
+            final boolean readOffsetWithinCompleteBlk = offset[index] < lengthOfCompleteBlk;
+            final boolean readLengthPastCompleteBlk = offset[index] + length[index] > lengthOfCompleteBlk;
+            if (readOffsetWithinCompleteBlk) {
+              //get the blocks of finalized (completed) block range
+              blocks.addAll(getFinalizedBlockRangeBatch(offset[index],  Math.min(length[index], lengthOfCompleteBlk - offset[index])));
+            }
+
+            // get the blocks from incomplete block range
+            if (readLengthPastCompleteBlk) {
+              blocks.add(locatedBlocks.getLastLocatedBlock());
+            }
+            return new Object();
+          }
+        }));
+
+
+
+      }
+
+    for (Future<Object> future : futures) {
+      try {
+        future.get();
+      } catch (InterruptedException e) {
+        throw (InterruptedIOException) new InterruptedIOException().initCause(e);
+      } catch (ExecutionException e) {
+        throw new IOException(e);
+      }
+    }
+
+      return rtn;
+
+  }
+
   private int[] preadBatch(long[] position, byte[][] buffer, int[] offset, int[] length)
           throws IOException {
-    long ts1=System.currentTimeMillis();
     // sanity checks
     dfsClient.checkOpen();
     if (closed.get()) {
@@ -1916,7 +2009,6 @@ public class DFSInputStream extends FSInputStream
 
     int[] realLen = Arrays.copyOf(length,length.length);
     HashMap<Long,BatchReadItems> map = new HashMap<Long, BatchReadItems>(64);
-    long ts2=System.currentTimeMillis();
 
     for(int i=0;i<length.length;i++) {
       if ((position[i] + length[i]) > filelen) {
@@ -1924,10 +2016,10 @@ public class DFSInputStream extends FSInputStream
       }
 
       List<LocatedBlock> blockRange = getBlockRange(position[i], realLen[i]);
-      int[] remaining = Arrays.copyOf(realLen, realLen.length);
+      int remaining = realLen[i];
       for (LocatedBlock blk : blockRange) {
         long targetStart = position[i] - blk.getStartOffset();
-        long bytesToRead = Math.min(remaining[i], blk.getBlockSize() - targetStart);
+        long bytesToRead = Math.min(remaining, blk.getBlockSize() - targetStart);
 
         DfsInputStreamBatchGroup item = new DfsInputStreamBatchGroup();
         item.index = i;
@@ -1944,14 +2036,12 @@ public class DFSInputStream extends FSInputStream
         list.patch.add(item);
 
 
-        remaining[i] -= bytesToRead;
+        remaining -= bytesToRead;
         position[i] += bytesToRead;
         offset[i] += bytesToRead;
       }
     }
-    long ts3=System.currentTimeMillis();
 
-      System.out.println("yanniandebug_blockSplit:"+map.size()+"@"+position.length);
 
     final List<Future<Object>> futures = new ArrayList<Future<Object>>(1+(offset.length));
     ExecutorService pool=GET_POOL();
@@ -1964,7 +2054,6 @@ public class DFSInputStream extends FSInputStream
         futures.add(pool.submit(new Callable<Object>() {
           @Override
           public Object call() throws Exception {
-            long ts01=System.currentTimeMillis();
             long[] targetStart=new long[batch.size()];
             long[] bytesToRead=new long[batch.size()];
             long[] targetEnd=new long[batch.size()];
@@ -1985,9 +2074,7 @@ public class DFSInputStream extends FSInputStream
 
             boolean debug=false;
             Map<ExtendedBlock,Set<DatanodeInfo>> corruptedBlockMap = new ConcurrentHashMap<>();
-            long ts02=System.currentTimeMillis();
 
-            long ts03=0;
 
             try {
               if (debug&&dfsClient.isHedgedReadsEnabled()) {
@@ -1996,13 +2083,10 @@ public class DFSInputStream extends FSInputStream
               } else {
                 fetchBlockByteRange(blk, targetStart, targetEnd, bufferList, offsets, corruptedBlockMap);
               }
-              ts03=System.currentTimeMillis();
             } finally {
               reportCheckSumFailure(corruptedBlockMap, blk.getLocations().length);
             }
 
-            long ts04=System.currentTimeMillis();
-            LOG.info("yanniandebug_dfetchBlockByteRange:"+(ts04-ts01)+"@"+(ts03-ts01)+"@"+(ts02-ts01));
             return new Object();
           }
         }));
@@ -2026,8 +2110,6 @@ public class DFSInputStream extends FSInputStream
         }
       }
 
-    long ts4=System.currentTimeMillis();
-    LOG.info("yanniandebug_diff_pread:"+(ts4-ts1)+"@"+(ts3-ts1)+"@"+(ts2-ts1));
 
     return realLen;
   }

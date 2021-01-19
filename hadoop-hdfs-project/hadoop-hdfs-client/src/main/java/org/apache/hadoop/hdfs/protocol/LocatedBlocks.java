@@ -17,9 +17,11 @@
  */
 package org.apache.hadoop.hdfs.protocol;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
@@ -33,7 +35,7 @@ import org.apache.hadoop.fs.FileEncryptionInfo;
 public class LocatedBlocks {
   private final long fileLength;
   // array of blocks with prioritized locations
-  private final List<LocatedBlock> blocks;
+  private final AtomicReference<List<LocatedBlock>> blocks=new AtomicReference<>(null);
   private final boolean underConstruction;
   private final LocatedBlock lastLocatedBlock;
   private final boolean isLastBlockComplete;
@@ -41,7 +43,7 @@ public class LocatedBlocks {
 
   public LocatedBlocks() {
     fileLength = 0;
-    blocks = null;
+    blocks.set(null);
     underConstruction = false;
     lastLocatedBlock = null;
     isLastBlockComplete = false;
@@ -52,7 +54,7 @@ public class LocatedBlocks {
     List<LocatedBlock> blks, LocatedBlock lastBlock,
     boolean isLastBlockCompleted, FileEncryptionInfo feInfo) {
     fileLength = flength;
-    blocks = blks;
+    blocks.set(blks);
     underConstruction = isUnderConstuction;
     this.lastLocatedBlock = lastBlock;
     this.isLastBlockComplete = isLastBlockCompleted;
@@ -63,7 +65,7 @@ public class LocatedBlocks {
    * Get located blocks.
    */
   public List<LocatedBlock> getLocatedBlocks() {
-    return blocks;
+    return blocks.get();
   }
 
   /** Get the last located block. */
@@ -80,14 +82,14 @@ public class LocatedBlocks {
    * Get located block.
    */
   public LocatedBlock get(int index) {
-    return blocks.get(index);
+    return blocks.get().get(index);
   }
 
   /**
    * Get number of located blocks.
    */
   public int locatedBlockCount() {
-    return blocks == null ? 0 : blocks.size();
+    return blocks == null ? 0 : blocks.get().size();
   }
 
   /**
@@ -140,34 +142,41 @@ public class LocatedBlocks {
             return 1;
           }
         };
-    return Collections.binarySearch(blocks, key, comp);
+    return Collections.binarySearch(blocks.get(), key, comp);
   }
 
   public void insertRange(int blockIdx, List<LocatedBlock> newBlocks) {
-    int oldIdx = blockIdx;
-    int insStart = 0, insEnd = 0;
-    for(int newIdx = 0; newIdx < newBlocks.size() && oldIdx < blocks.size();
-                                                        newIdx++) {
-      long newOff = newBlocks.get(newIdx).getStartOffset();
-      long oldOff = blocks.get(oldIdx).getStartOffset();
-      if(newOff < oldOff) {
-        insEnd++;
-      } else if(newOff == oldOff) {
-        // replace old cached block by the new one
-        blocks.set(oldIdx, newBlocks.get(newIdx));
-        if(insStart < insEnd) { // insert new blocks
-          blocks.addAll(oldIdx, newBlocks.subList(insStart, insEnd));
-          oldIdx += insEnd - insStart;
+    List<LocatedBlock> blocks_copy=new ArrayList<>(blocks.get());
+    try {
+      int oldIdx = blockIdx;
+      int insStart = 0, insEnd = 0;
+      for (int newIdx = 0; newIdx < newBlocks.size() && oldIdx < blocks_copy.size();
+           newIdx++) {
+        long newOff = newBlocks.get(newIdx).getStartOffset();
+        long oldOff = blocks_copy.get(oldIdx).getStartOffset();
+        if (newOff < oldOff) {
+          insEnd++;
+        } else if (newOff == oldOff) {
+          // replace old cached block by the new one
+          blocks_copy.set(oldIdx, newBlocks.get(newIdx));
+          if (insStart < insEnd) { // insert new blocks
+            blocks_copy.addAll(oldIdx, newBlocks.subList(insStart, insEnd));
+            oldIdx += insEnd - insStart;
+          }
+          insStart = insEnd = newIdx + 1;
+          oldIdx++;
+        } else {  // newOff > oldOff
+          assert false : "List of LocatedBlock must be sorted by startOffset";
         }
-        insStart = insEnd = newIdx+1;
-        oldIdx++;
-      } else {  // newOff > oldOff
-        assert false : "List of LocatedBlock must be sorted by startOffset";
       }
-    }
-    insEnd = newBlocks.size();
-    if(insStart < insEnd) { // insert new blocks
-      blocks.addAll(oldIdx, newBlocks.subList(insStart, insEnd));
+      insEnd = newBlocks.size();
+      if (insStart < insEnd) { // insert new blocks
+        blocks_copy.addAll(oldIdx, newBlocks.subList(insStart, insEnd));
+      }
+
+    }finally
+    {
+      blocks.set(blocks_copy);
     }
   }
 

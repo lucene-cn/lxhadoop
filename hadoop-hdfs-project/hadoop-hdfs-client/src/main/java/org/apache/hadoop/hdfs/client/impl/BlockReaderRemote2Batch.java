@@ -124,7 +124,6 @@ public class BlockReaderRemote2Batch implements BlockReader {
 
       amt+=nRead;
     }
-    LOG.info("yanniandebug_diff:"+(System.currentTimeMillis()-ts)+"@"+(ts1-ts));
 
     return amt;
   }
