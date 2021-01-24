@@ -124,7 +124,6 @@ public class Sender implements DataTransferProtocol {
                         final boolean sendChecksum,
                         final CachingStrategy cachingStrategy) throws IOException {
 
-    LOG.info("yanniandebug:"+ Arrays.toString(length));
     ArrayList<DataTransferProtos.OpReadBlockProtoItem> batchItem=new ArrayList<DataTransferProtos.OpReadBlockProtoItem>();
     for(int i=0;i<blockOffset.length;i++)
     {

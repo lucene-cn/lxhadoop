@@ -590,32 +590,13 @@ class DataXceiver extends Receiver implements Runnable {
         throw e;
       }
 
-      // send op status
-      writeSuccessWithChecksumInfo(blockSender, new DataOutputStream(getOutputStream()));
 
       long beginRead = Time.monotonicNow();
       read = blockSender.sendBlock(out, baseStream, null); // send data
       long duration = Time.monotonicNow() - beginRead;
-      if (blockSender.didSendEntireByteRange()) {
-        // If we sent the entire range, then we should expect the client
-        // to respond with a Status enum.
-        try {
-          ClientReadStatusProto stat = ClientReadStatusProto.parseFrom(
-                  PBHelperClient.vintPrefixed(in));
-          if (!stat.hasStatus()) {
-            LOG.warn("Client " + peer.getRemoteAddressString() +
-                    " did not send a valid status code after reading. " +
-                    "Will close connection.");
-            IOUtils.closeStream(out);
-          }
-        } catch (IOException ioe) {
-          LOG.debug("Error reading client status response. Will close connection.", ioe);
-          IOUtils.closeStream(out);
-          incrDatanodeNetworkErrors();
-        }
-      } else {
-        IOUtils.closeStream(out);
-      }
+
+      IOUtils.closeStream(out);
+
       datanode.metrics.incrBytesRead((int) read);
       datanode.metrics.incrBlocksRead();
       datanode.metrics.incrTotalReadTime(duration);
@@ -1409,30 +1390,7 @@ class DataXceiver extends Receiver implements Runnable {
     out.flush();
   }
 
-  private void writeSuccessWithChecksumInfo(BlockSenderBatch blockSender,
-                                            DataOutputStream out) throws IOException {
 
-    ArrayList<Long> list=new ArrayList<>();
-    for(Long l:blockSender.getOffset()){
-      list.add(l);
-    }
-
-    ArrayList<DataTransferProtos.ChecksumProto> listchk=new ArrayList<>();
-    for(DataChecksum e:blockSender.getChecksum()){
-      listchk.add(DataTransferProtoUtil.toProto(e));
-    }
-    DataTransferProtos.ReadOpChecksumInfoBatchProto ckInfo = DataTransferProtos.ReadOpChecksumInfoBatchProto.newBuilder()
-            .addAllChecksum(listchk)
-            .addAllChunkOffset(list)
-            .build();
-
-    DataTransferProtos.BlockOpResponseBatchProto response = DataTransferProtos.BlockOpResponseBatchProto.newBuilder()
-            .setStatus(SUCCESS)
-            .setReadOpChecksumInfo(ckInfo)
-            .build();
-    response.writeDelimitedTo(out);
-    out.flush();
-  }
 
   
   private void incrDatanodeNetworkErrors() {

@@ -64,27 +64,21 @@ public class BlockReaderRemote2Batch implements BlockReader {
   final private long blockId;
   private final DataInputStream inSocket;
 
-  private DataChecksum[] checksum;
   private final PacketReceiverBatch[] packetReceiver ;
 
   final ByteBuffer[] curDataSlice;
 
-  /** offset in block of the last chunk received */
-  private long[] lastSeqNo ;
+
 
   /** offset in block where reader wants to actually read */
   private long[] startOffset;
   private final String filename;
 
-  private final int[] bytesPerChecksum;
-  private final int[] checksumSize;
 
 
-  private long[] bytesNeededToFinish;
 
   private final boolean isLocal;
 
-  private final boolean verifyChecksum;
 
   private boolean sentStatusCode = false;
 
@@ -117,7 +111,6 @@ public class BlockReaderRemote2Batch implements BlockReader {
       amt+=nRead;
     }
 
-    LOG.info("yanniandebug:"+(System.currentTimeMillis()-ts)+"@"+byteBuffer.length);
 
     return amt;
   }
@@ -134,64 +127,6 @@ public class BlockReaderRemote2Batch implements BlockReader {
     throw new IOException("not supported");
   }
 
-  int index=0;
-  private void readNextPacket(int i,InputStream raminput) throws IOException {
-    //Read packet headers.
-
-    packetReceiver[i].receiveNextPacket(raminput);
-
-    PacketHeaderBatch curHeader = packetReceiver[i].getHeader();
-    this.index= (int) curHeader.getBatchIndex();
-    if(this.index!=i)
-    {
-      throw new IOException("out of order "+this.index+"@"+i);
-    }
-
-    curDataSlice[i] = packetReceiver[i].getDataSlice();
-    assert curDataSlice[i].capacity() == curHeader.getDataLen();
-
-    // Sanity check the lengths
-    if (!curHeader.sanityCheck(lastSeqNo[i])) {
-      throw new IOException("BlockReader: error in packet header " +  curHeader);
-    }
-
-    if (curHeader.getDataLen() > 0) {
-
-      int chunks = 1 + (curHeader.getDataLen() - 1) / bytesPerChecksum[i];
-      int checksumsLen = chunks * checksumSize[i];
-
-      assert packetReceiver[i].getChecksumSlice().capacity() == checksumsLen : "checksum slice capacity=" + packetReceiver[i].getChecksumSlice().capacity() + " checksumsLen=" + checksumsLen;
-
-      lastSeqNo[i] = curHeader.getSeqno();
-      if (verifyChecksum && curDataSlice[i].remaining() > 0) {
-        checksum[i].verifyChunkedSums(curDataSlice[i],  packetReceiver[i].getChecksumSlice(), filename, curHeader.getOffsetInBlock());
-      }
-      bytesNeededToFinish[this.index] -= curHeader.getDataLen();
-    }
-
-    // First packet will include some data prior to the first byte
-    // the user requested. Skip it.
-    if (curHeader.getOffsetInBlock() < startOffset[this.index]) {
-      int newPos = (int) (startOffset[this.index] - curHeader.getOffsetInBlock());
-      curDataSlice[i].position(newPos);
-    }
-
-    // If we've now satisfied the whole client read, read one last packet
-    // header, which should be empty
-    if (bytesNeededToFinish[this.index] <= 0) {
-
-      readTrailingEmptyPacket(this.index,raminput);
-      if((this.index+1)>=this.bytesNeededToFinish.length)
-      {
-        if (verifyChecksum) {
-          sendReadResult(Status.CHECKSUM_OK);
-        } else {
-          sendReadResult(Status.SUCCESS);
-        }
-      }
-
-    }
-  }
 
   @Override
   public synchronized long skip(long n) throws IOException {
@@ -212,8 +147,8 @@ public class BlockReaderRemote2Batch implements BlockReader {
   }
 
   protected BlockReaderRemote2Batch(String file, long blockId,
-                                    DataChecksum[] checksum, boolean verifyChecksum,
-                                    long startOffset[], long[] firstChunkOffset, long[] bytesToRead, Peer peer,
+                                    boolean verifyChecksum,
+                                    long startOffset[],  long[] bytesToRead, Peer peer,
                                     DatanodeID datanodeID, PeerCache peerCache, Tracer tracer) throws IOException {
     this.isLocal = DFSUtilClient.isLocalAddress(NetUtils.
         createSocketAddr(datanodeID.getXferAddr()));
@@ -222,18 +157,12 @@ public class BlockReaderRemote2Batch implements BlockReader {
     this.datanodeID = datanodeID;
 
     this.inSocket = new DataInputStream(peer.getInputStream());// peer.getInputStreamChannel();
-    this.checksum = checksum;
-    this.verifyChecksum = verifyChecksum;
     this.startOffset =new long[startOffset.length];
-    this.bytesNeededToFinish =new long[startOffset.length];
     this.curDataSlice=new ByteBuffer[startOffset.length];
-    this.lastSeqNo=new long[startOffset.length];
-    Arrays.fill(this.lastSeqNo,-1);
 
     for(int i=0;i<this.startOffset.length;i++)
     {
       this.startOffset[i] =Math.max(startOffset[i],0);
-      this.bytesNeededToFinish[i] = bytesToRead[i] + (startOffset[i] - firstChunkOffset[i]);
 
     }
 
@@ -245,13 +174,9 @@ public class BlockReaderRemote2Batch implements BlockReader {
     // the amount that the user wants (bytesToRead), plus the padding at
     // the beginning in order to chunk-align. Note that the DN may elect
     // to send more than this amount if the read starts/ends mid-chunk.
-    bytesPerChecksum=new int[this.startOffset.length];
-    checksumSize=new int[this.startOffset.length];
     this.tracer=new Tracer[this.startOffset.length];
     for(int i=0;i<this.startOffset.length;i++)
     {
-      bytesPerChecksum[i] = this.checksum[i].getBytesPerChecksum();
-      checksumSize[i] = this.checksum[i].getChecksumSize();
       this.tracer[i] = tracer;
     }
 
@@ -276,7 +201,6 @@ public class BlockReaderRemote2Batch implements BlockReader {
       startOffset[i] = -1;
 
     }
-    checksum = null;
     if (peerCache != null && sentStatusCode) {
       peerCache.put(datanodeID, peer);
     } else {
@@ -358,39 +282,10 @@ public class BlockReaderRemote2Batch implements BlockReader {
     new Sender(out).readBlockBatch(block, blockToken, clientName, startOffset, len,
         verifyChecksum, cachingStrategy);
 
-    //
-    // Get bytes in block
-    //
-    DataInputStream in = new DataInputStream(peer.getInputStream());
-
-    DataTransferProtos.BlockOpResponseBatchProto status = DataTransferProtos.BlockOpResponseBatchProto.parseFrom( PBHelperClient.vintPrefixed(in));
-    checkSuccess(status, peer, block, file);
-    DataTransferProtos.ReadOpChecksumInfoBatchProto checksumInfo =status.getReadOpChecksumInfo();
-
-    DataChecksum[] checksum =new DataChecksum[checksumInfo.getChecksumCount()];
-    for(int i=0;i<checksum.length;i++)
-    {
-      checksum[i]=DataTransferProtoUtil.fromProto(checksumInfo.getChecksum(i));
-    }
 
 
-    // Read the first chunk offset.
-    long[] firstChunkOffset =new long[checksumInfo.getChunkOffsetCount()] ;
-    for(int i=0;i<firstChunkOffset.length;i++)
-    {
-      firstChunkOffset[i]=checksumInfo.getChunkOffset(i);
-      if ( firstChunkOffset[i] < 0 || firstChunkOffset[i] > startOffset[i] ||
-              firstChunkOffset[i] <= (startOffset[i] - checksum[i].getBytesPerChecksum())) {
-        throw new IOException("BlockReader: error in first chunk offset (" +
-                firstChunkOffset + ") startOffset is " +
-                startOffset + " for file " + file);
-      }
-    }
-
-
-
-    return new BlockReaderRemote2Batch(file, block.getBlockId(), checksum,
-        verifyChecksum, startOffset, firstChunkOffset, len, peer, datanodeID,
+    return new BlockReaderRemote2Batch(file, block.getBlockId(),
+        verifyChecksum, startOffset, len, peer, datanodeID,
         peerCache, tracer);
   }
 
