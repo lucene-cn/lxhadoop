@@ -46,7 +46,7 @@ public class BatchRead {
 				{
 					position[j]=1+pos+(long) (Math.random()*1024*1024*128);//随机数不能越界 //1+(long) (Math.random()*max_position);//
 					
-					int len=1024;//(int) (Math.random()*1024);
+					int len=64;//(int) (Math.random()*1024);
 					if(buffer[j]==null)
 					{
 						buffer[j]=new byte[len];
