@@ -102,24 +102,17 @@ public class BlockReaderRemote2Batch implements BlockReader {
     byte[] byteBuffer=new byte[this.inSocket.readInt()];
     this.inSocket.readFully(byteBuffer,0,byteBuffer.length);
 
-    ByteArrayInputStream inputRam=new ByteArrayInputStream(byteBuffer);
-
+    DataInputStream inputRam=new DataInputStream(new ByteArrayInputStream(byteBuffer));
     int amt=0;
     for(int i=0;i<off.length;i++)
     {
-      if (curDataSlice[i] == null || curDataSlice[i].remaining() == 0 && bytesNeededToFinish[i] > 0) { //||((i+1)<this.bytesNeededToFinish.length)
-        try (TraceScope ignored = tracer[i].newScope("BlockReaderRemote2#readNextPacket(" + blockId + ")")) {
-          readNextPacket(i,inputRam);
-        }
-      }
 
-      if (curDataSlice[i].remaining() == 0) {
-        // we're at EOF now
-        return -1;
+      int nRead =inputRam.readInt();
+      if(nRead!=len[i])
+      {
+        throw new IOException("check error :"+i+"@"+nRead+"@"+len);
       }
-
-      int nRead = Math.min(curDataSlice[i].remaining(), len[i]);
-      curDataSlice[i].get(buf[i], off[i], nRead);
+      inputRam.readFully(buf[i],off[i],nRead);
 
       amt+=nRead;
     }

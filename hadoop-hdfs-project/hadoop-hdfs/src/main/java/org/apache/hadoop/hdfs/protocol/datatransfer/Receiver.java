@@ -104,7 +104,6 @@ public abstract class Receiver implements DataTransferProtocol {
       opReadBlock();
       break;
 	case READ_BLOCK_BATCH:
-	  long ts=System.currentTimeMillis();
       opReadBlockBatch();
       break; 
     case WRITE_BLOCK:

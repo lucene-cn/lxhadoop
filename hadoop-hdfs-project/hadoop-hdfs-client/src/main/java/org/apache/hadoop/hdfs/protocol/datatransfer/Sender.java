@@ -23,6 +23,7 @@ import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
@@ -123,6 +124,7 @@ public class Sender implements DataTransferProtocol {
                         final boolean sendChecksum,
                         final CachingStrategy cachingStrategy) throws IOException {
 
+    LOG.info("yanniandebug:"+ Arrays.toString(length));
     ArrayList<DataTransferProtos.OpReadBlockProtoItem> batchItem=new ArrayList<DataTransferProtos.OpReadBlockProtoItem>();
     for(int i=0;i<blockOffset.length;i++)
     {
